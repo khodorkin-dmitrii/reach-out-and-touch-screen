@@ -1,0 +1,418 @@
+package com.yavin.reachoutandtouchscreen
+
+import android.content.res.AssetManager
+import android.os.Handler
+import android.os.HandlerThread
+import android.os.Looper
+import android.view.Choreographer
+import android.view.Surface
+import androidx.annotation.MainThread
+import com.google.android.filament.Box
+import com.google.android.filament.Camera
+import com.google.android.filament.Colors
+import com.google.android.filament.Engine
+import com.google.android.filament.EntityManager
+import com.google.android.filament.IndexBuffer
+import com.google.android.filament.LightManager
+import com.google.android.filament.Material
+import com.google.android.filament.RenderableManager
+import com.google.android.filament.Renderer
+import com.google.android.filament.SwapChain
+import com.google.android.filament.VertexBuffer
+import com.google.android.filament.Viewport
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+import java.util.concurrent.CountDownLatch
+
+/**
+ * Main-thread facade around a single-thread-owned Filament scene.
+ *
+ * Surface destruction and final cleanup are synchronous because Android may release the native
+ * surface as soon as its callback returns. All other work is queued to keep engine and asset
+ * creation off the UI thread while preserving Filament's single-thread access requirement.
+ */
+@MainThread
+class FilamentRenderer(assets: AssetManager) {
+    private val renderThread = HandlerThread("FilamentRenderer").apply { start() }
+    private val handler = Handler(renderThread.looper)
+    private lateinit var state: RenderState
+    @Volatile
+    private var acceptingCalls = true
+
+    init {
+        handler.post { state = RenderState(assets) }
+    }
+
+    fun attachSurface(surface: Surface, width: Int, height: Int) {
+        post { attachSurface(surface, width, height) }
+    }
+
+    fun resize(width: Int, height: Int) {
+        post { resize(width, height) }
+    }
+
+    fun detachSurface(surface: Surface) {
+        runSynchronously { detachSurface(surface) }
+    }
+
+    fun setResumed(resumed: Boolean) {
+        post { setResumed(resumed) }
+    }
+
+    fun onTouch(touch: TouchInput) {
+        post { onTouch(touch) }
+    }
+
+    fun destroy() {
+        checkMainThread()
+        if (!acceptingCalls) return
+        acceptingCalls = false
+        runSynchronously(allowAfterClose = true) { destroy() }
+        renderThread.quitSafely()
+    }
+
+    private fun post(block: RenderState.() -> Unit) {
+        checkMainThread()
+        if (!acceptingCalls) return
+        handler.post {
+            if (acceptingCalls) state.block()
+        }
+    }
+
+    private fun runSynchronously(
+        allowAfterClose: Boolean = false,
+        block: RenderState.() -> Unit,
+    ) {
+        checkMainThread()
+        if (!acceptingCalls && !allowAfterClose) return
+        val completion = CountDownLatch(1)
+        handler.post {
+            try {
+                state.block()
+            } finally {
+                completion.countDown()
+            }
+        }
+        completion.await()
+    }
+
+    private fun checkMainThread() {
+        check(Looper.myLooper() == Looper.getMainLooper()) {
+            "FilamentRenderer facade must be accessed from the main thread"
+        }
+    }
+
+    private class RenderState(private val assets: AssetManager) : Choreographer.FrameCallback {
+        private val engine = Engine.create()
+        private val renderer = engine.createRenderer()
+        private val scene = engine.createScene()
+        private val view = engine.createView()
+        private val entityManager = EntityManager.get()
+        private val cameraEntity = entityManager.create()
+        private val camera = engine.createCamera(cameraEntity)
+        private val sphereEntity = entityManager.create()
+        private val lightEntity = entityManager.create()
+        private val meshData = SphereMesh.create(
+            radius = 1f,
+            rings = SPHERE_RINGS,
+            sectors = SPHERE_SECTORS,
+        )
+        private val vertexData = createVertexBufferData(meshData)
+        private val indexData = createIndexBufferData(meshData)
+        private val vertexBuffer = createVertexBuffer()
+        private val indexBuffer = createIndexBuffer()
+        private val materialPackage = readAsset(MATERIAL_ASSET)
+        private val material = Material.Builder()
+            .payload(materialPackage, materialPackage.remaining())
+            .build(engine)
+        private val materialInstance = material.createInstance()
+        private val choreographer = Choreographer.getInstance()
+
+        private var surface: Surface? = null
+        private var swapChain: SwapChain? = null
+        private var resumed = false
+        private var frameScheduled = false
+        private var destroyed = false
+        private var width = 0
+        private var height = 0
+        private var rippleActive = false
+        private var rippleStartTimeNanos = 0L
+        private val projectionMatrix = DoubleArray(16)
+        private val viewMatrix = DoubleArray(16)
+
+        init {
+            renderer.clearOptions = Renderer.ClearOptions().apply {
+                clear = true
+                clearColor = doubleArrayOf(0.018, 0.025, 0.045, 1.0)
+            }
+
+            view.scene = scene
+            view.camera = camera
+            camera.setExposure(16f, 1f / 125f, 100f)
+
+            materialInstance.setParameter(
+                "baseColor",
+                Colors.RgbaType.SRGB,
+                0.08f,
+                0.42f,
+                0.95f,
+                1f,
+            )
+            materialInstance.setParameter("roughness", 0.28f)
+            materialInstance.setParameter("metallic", 0.05f)
+            materialInstance.setParameter("rippleOrigin", 0f, 0f, 1f)
+            materialInstance.setParameter("rippleTime", 0f)
+            materialInstance.setParameter("rippleActive", 0f)
+
+            RenderableManager.Builder(1)
+                .boundingBox(Box(0f, 0f, 0f, 1f, 1f, 1f))
+                .material(0, materialInstance)
+                .geometry(
+                    0,
+                    RenderableManager.PrimitiveType.TRIANGLES,
+                    vertexBuffer,
+                    indexBuffer,
+                    0,
+                    meshData.indices.size,
+                )
+                .build(engine, sphereEntity)
+
+            LightManager.Builder(LightManager.Type.DIRECTIONAL)
+                .color(1f, 0.94f, 0.86f)
+                .intensity(95_000f)
+                .direction(-0.55f, -0.8f, -0.65f)
+                .castShadows(false)
+                .build(engine, lightEntity)
+
+            scene.addEntity(sphereEntity)
+            scene.addEntity(lightEntity)
+        }
+
+        fun attachSurface(newSurface: Surface, width: Int, height: Int) {
+            if (destroyed) return
+            if (surface !== newSurface) {
+                destroySwapChain()
+                surface = newSurface
+                swapChain = engine.createSwapChain(newSurface)
+            }
+            resize(width, height)
+            updateFrameScheduling()
+        }
+
+        fun resize(width: Int, height: Int) {
+            if (destroyed || width <= 0 || height <= 0) return
+            this.width = width
+            this.height = height
+            val aspectRatio = width.toDouble() / height.toDouble()
+            view.viewport = Viewport(0, 0, width, height)
+            camera.setProjection(
+                VERTICAL_FOV_DEGREES,
+                aspectRatio,
+                0.1,
+                100.0,
+                Camera.Fov.VERTICAL,
+            )
+            val cameraDistance = CameraFraming.distanceForSphere(
+                radius = 1.0,
+                verticalFovDegrees = VERTICAL_FOV_DEGREES,
+                aspectRatio = aspectRatio,
+                margin = FRAMING_MARGIN,
+            )
+            camera.lookAt(0.0, 0.1, cameraDistance, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0)
+            updateFrameScheduling()
+        }
+
+        fun detachSurface(detachedSurface: Surface) {
+            if (destroyed || surface !== detachedSurface) return
+            stopFrameLoop()
+            destroySwapChain()
+            surface = null
+            width = 0
+            height = 0
+        }
+
+        fun setResumed(resumed: Boolean) {
+            if (destroyed) return
+            this.resumed = resumed
+            updateFrameScheduling()
+        }
+
+        fun onTouch(touch: TouchInput) {
+            if (!canRender()) return
+            camera.getProjectionMatrix(projectionMatrix)
+            camera.getViewMatrix(viewMatrix)
+            val ray = ScreenRay.create(
+                touch = touch,
+                viewportWidth = width,
+                viewportHeight = height,
+                projectionMatrix = projectionMatrix,
+                viewMatrix = viewMatrix,
+            ) ?: return
+
+            // The sphere renderable currently has an identity transform, so its unit object-space
+            // sphere and API-level world-space sphere are identical. A future transform must first
+            // move this ray into object space before using the same intersection routine.
+            val hit = RaySphereIntersection.nearestHit(
+                ray = ray,
+                sphereCenter = SPHERE_CENTER,
+                sphereRadius = SPHERE_RADIUS,
+            ) ?: return
+            val rippleDirection = (hit - SPHERE_CENTER).normalized() ?: return
+
+            materialInstance.setParameter(
+                "rippleOrigin",
+                rippleDirection.x.toFloat(),
+                rippleDirection.y.toFloat(),
+                rippleDirection.z.toFloat(),
+            )
+            materialInstance.setParameter("rippleTime", 0f)
+            materialInstance.setParameter("rippleActive", 1f)
+            rippleStartTimeNanos = System.nanoTime()
+            rippleActive = true
+        }
+
+        override fun doFrame(frameTimeNanos: Long) {
+            frameScheduled = false
+            val currentSwapChain = swapChain
+            if (!canRender() || currentSwapChain == null) return
+
+            updateRipple(frameTimeNanos)
+            if (renderer.beginFrame(currentSwapChain, frameTimeNanos)) {
+                renderer.render(view)
+                renderer.endFrame()
+            }
+            updateFrameScheduling()
+        }
+
+        fun destroy() {
+            if (destroyed) return
+            destroyed = true
+            stopFrameLoop()
+            destroySwapChain()
+            surface = null
+
+            scene.removeEntity(sphereEntity)
+            scene.removeEntity(lightEntity)
+            engine.destroyEntity(sphereEntity)
+            engine.destroyEntity(lightEntity)
+            engine.destroyMaterialInstance(materialInstance)
+            engine.destroyMaterial(material)
+            engine.destroyVertexBuffer(vertexBuffer)
+            engine.destroyIndexBuffer(indexBuffer)
+            engine.destroyCameraComponent(cameraEntity)
+            engine.destroyView(view)
+            engine.destroyScene(scene)
+            engine.destroyRenderer(renderer)
+            entityManager.destroy(sphereEntity)
+            entityManager.destroy(lightEntity)
+            entityManager.destroy(cameraEntity)
+            engine.destroy()
+        }
+
+        private fun createVertexBuffer() = VertexBuffer.Builder()
+            .vertexCount(meshData.vertexCount)
+            .bufferCount(1)
+            .attribute(
+                VertexBuffer.VertexAttribute.POSITION,
+                0,
+                VertexBuffer.AttributeType.FLOAT3,
+                0,
+                VERTEX_SIZE_BYTES,
+            )
+            .attribute(
+                VertexBuffer.VertexAttribute.TANGENTS,
+                0,
+                VertexBuffer.AttributeType.FLOAT4,
+                3 * Float.SIZE_BYTES,
+                VERTEX_SIZE_BYTES,
+            )
+            .build(engine)
+            .also { it.setBufferAt(engine, 0, vertexData) }
+
+        private fun createIndexBuffer() = IndexBuffer.Builder()
+            .indexCount(meshData.indices.size)
+            .bufferType(IndexBuffer.Builder.IndexType.USHORT)
+            .build(engine)
+            .also { it.setBuffer(engine, indexData) }
+
+        private fun destroySwapChain() {
+            swapChain?.let {
+                engine.destroySwapChain(it)
+                engine.flushAndWait()
+            }
+            swapChain = null
+        }
+
+        private fun updateRipple(frameTimeNanos: Long) {
+            if (!rippleActive) return
+            val elapsedSeconds = (
+                (frameTimeNanos - rippleStartTimeNanos).coerceAtLeast(0L) * NANOS_TO_SECONDS
+            ).toFloat()
+            if (elapsedSeconds >= RIPPLE_LIFETIME_SECONDS) {
+                materialInstance.setParameter("rippleTime", RIPPLE_LIFETIME_SECONDS)
+                materialInstance.setParameter("rippleActive", 0f)
+                rippleActive = false
+            } else {
+                materialInstance.setParameter("rippleTime", elapsedSeconds)
+            }
+        }
+
+        private fun updateFrameScheduling() {
+            if (canRender() && !frameScheduled) {
+                frameScheduled = true
+                choreographer.postFrameCallback(this)
+            } else if (!canRender()) {
+                stopFrameLoop()
+            }
+        }
+
+        private fun stopFrameLoop() {
+            if (frameScheduled) {
+                choreographer.removeFrameCallback(this)
+                frameScheduled = false
+            }
+        }
+
+        private fun canRender() =
+            !destroyed && resumed && swapChain != null && width > 0 && height > 0
+
+        private fun readAsset(path: String): ByteBuffer {
+            val bytes = assets.open(path).use { it.readBytes() }
+            return ByteBuffer.allocateDirect(bytes.size)
+                .order(ByteOrder.nativeOrder())
+                .put(bytes)
+                .apply { flip() }
+        }
+
+        private companion object {
+            const val SPHERE_RINGS = 24
+            const val SPHERE_SECTORS = 48
+            const val VERTEX_SIZE_BYTES = SphereMeshData.FLOATS_PER_VERTEX * Float.SIZE_BYTES
+            const val MATERIAL_ASSET = "materials/sphere.filamat"
+            const val VERTICAL_FOV_DEGREES = 45.0
+            const val FRAMING_MARGIN = 1.18
+            const val SPHERE_RADIUS = 1.0
+            const val RIPPLE_LIFETIME_SECONDS = 3f
+            const val NANOS_TO_SECONDS = 1.0 / 1_000_000_000.0
+            val SPHERE_CENTER = Vector3(0.0, 0.0, 0.0)
+
+            fun createVertexBufferData(mesh: SphereMeshData): ByteBuffer =
+                ByteBuffer.allocateDirect(mesh.vertices.size * Float.SIZE_BYTES)
+                    .order(ByteOrder.nativeOrder())
+                    .apply {
+                        asFloatBuffer().put(mesh.vertices)
+                        limit(capacity())
+                        position(0)
+                    }
+
+            fun createIndexBufferData(mesh: SphereMeshData): ByteBuffer =
+                ByteBuffer.allocateDirect(mesh.indices.size * Short.SIZE_BYTES)
+                    .order(ByteOrder.nativeOrder())
+                    .apply {
+                        asShortBuffer().put(mesh.indices)
+                        limit(capacity())
+                        position(0)
+                    }
+        }
+    }
+}

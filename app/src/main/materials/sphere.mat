@@ -1,0 +1,49 @@
+material {
+    name : SphereMaterial,
+    shadingModel : lit,
+    parameters : [
+        { type : float4, name : baseColor },
+        { type : float, name : roughness },
+        { type : float, name : metallic },
+        { type : float3, name : rippleOrigin },
+        { type : float, name : rippleTime },
+        { type : float, name : rippleActive }
+    ],
+    requires : [
+        position,
+        tangents
+    ]
+}
+
+fragment {
+    void material(inout MaterialInputs material) {
+        material.baseColor = materialParams.baseColor;
+        material.roughness = materialParams.roughness;
+        material.metallic = materialParams.metallic;
+
+        float ripple = 0.0;
+        if (materialParams.rippleActive > 0.5) {
+            float3 surfaceDirection = normalize(getUserWorldPosition());
+            float angularDistance = acos(clamp(
+                dot(surfaceDirection, materialParams.rippleOrigin),
+                -1.0,
+                1.0
+            ));
+            float frontDistance = 1.12 * materialParams.rippleTime;
+            float distanceFromFront = angularDistance - frontDistance;
+            float band = exp(-0.5 * pow(distanceFromFront / 0.085, 2.0));
+            float damping = exp(-0.55 * materialParams.rippleTime) *
+                (1.0 - smoothstep(2.55, 2.90, materialParams.rippleTime));
+            ripple = band * damping;
+        }
+
+        material.baseColor.rgb = mix(
+            material.baseColor.rgb,
+            vec3(0.05, 0.85, 1.0),
+            min(1.0, ripple * 1.4)
+        );
+        material.roughness = max(0.08, material.roughness - ripple * 0.18);
+        material.emissive = vec4(vec3(0.0, 1.6, 4.0) * ripple, 1.0);
+        prepareMaterial(material);
+    }
+}
