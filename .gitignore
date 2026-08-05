@@ -1,22 +1,29 @@
+# Android Studio / IntelliJ IDEA
+.idea/
 *.iml
-.gradle
-.gradle-user-home
-.android-user-home
-.kotlin
+
+# Gradle and Kotlin
+.gradle/
+.gradle-user-home/
+.android-user-home/
+.kotlin/
+**/build/
+
+# Local Android SDK configuration
 local.properties
+
+# Native build output
+.externalNativeBuild/
+.cxx/
+
+# Android Studio output
+captures/
+
+# Signing credentials
+*.jks
+*.keystore
+keystore.properties
+
+# OS files
 .DS_Store
-
-.idea/caches
-.idea/libraries
-.idea/modules.xml
-.idea/workspace.xml
-.idea/navEditor.xml
-.idea/assetWizardSettings.xml
-
-.idea/gradle.xml
-.idea/deploymentTargetSelector.xml
-
-build
-captures
-.externalNativeBuild
-.cxx
+Thumbs.db
