@@ -15,6 +15,7 @@ import com.google.android.filament.EntityManager
 import com.google.android.filament.IndexBuffer
 import com.google.android.filament.LightManager
 import com.google.android.filament.Material
+import com.google.android.filament.MaterialInstance.FloatElement
 import com.google.android.filament.RenderableManager
 import com.google.android.filament.Renderer
 import com.google.android.filament.SwapChain
@@ -32,15 +33,19 @@ import java.util.concurrent.CountDownLatch
  * creation off the UI thread while preserving Filament's single-thread access requirement.
  */
 @MainThread
-class FilamentRenderer(assets: AssetManager) {
+class FilamentRenderer(
+    assets: AssetManager,
+    private val onFpsChanged: (Int) -> Unit,
+) {
     private val renderThread = HandlerThread("FilamentRenderer").apply { start() }
     private val handler = Handler(renderThread.looper)
+    private val mainHandler = Handler(Looper.getMainLooper())
     private lateinit var state: RenderState
     @Volatile
     private var acceptingCalls = true
 
     init {
-        handler.post { state = RenderState(assets) }
+        handler.post { state = RenderState(assets, ::publishFps) }
     }
 
     fun attachSurface(surface: Surface, width: Int, height: Int) {
@@ -102,7 +107,16 @@ class FilamentRenderer(assets: AssetManager) {
         }
     }
 
-    private class RenderState(private val assets: AssetManager) : Choreographer.FrameCallback {
+    private fun publishFps(fps: Int) {
+        mainHandler.post {
+            if (acceptingCalls) onFpsChanged(fps)
+        }
+    }
+
+    private class RenderState(
+        private val assets: AssetManager,
+        private val publishFps: (Int) -> Unit,
+    ) : Choreographer.FrameCallback {
         private val engine = Engine.create()
         private val renderer = engine.createRenderer()
         private val scene = engine.createScene()
@@ -135,10 +149,15 @@ class FilamentRenderer(assets: AssetManager) {
         private var destroyed = false
         private var width = 0
         private var height = 0
-        private var rippleActive = false
-        private var rippleStartTimeNanos = 0L
+        private val rippleEpochNanos = System.nanoTime()
+        private val rippleStore = RippleStore()
+        private val rippleParameters = FloatArray(MAX_ACTIVE_RIPPLES * RIPPLE_PARAMETER_COMPONENTS)
+        private var rippleClockNeedsUpdate = false
         private val projectionMatrix = DoubleArray(16)
         private val viewMatrix = DoubleArray(16)
+        private var fpsSampleStartNanos = 0L
+        private var renderedFramesInSample = 0
+        private var lastPublishedFps = 0
 
         init {
             renderer.clearOptions = Renderer.ClearOptions().apply {
@@ -160,9 +179,18 @@ class FilamentRenderer(assets: AssetManager) {
             )
             materialInstance.setParameter("roughness", 0.28f)
             materialInstance.setParameter("metallic", 0.05f)
-            materialInstance.setParameter("rippleOrigin", 0f, 0f, 1f)
-            materialInstance.setParameter("rippleTime", 0f)
-            materialInstance.setParameter("rippleActive", 0f)
+            for (slot in 0 until MAX_ACTIVE_RIPPLES) {
+                rippleParameters[slot * RIPPLE_PARAMETER_COMPONENTS + RIPPLE_START_COMPONENT] =
+                    INACTIVE_RIPPLE_START_SECONDS
+            }
+            materialInstance.setParameter(
+                "ripples",
+                FloatElement.FLOAT4,
+                rippleParameters,
+                0,
+                MAX_ACTIVE_RIPPLES,
+            )
+            materialInstance.setParameter("rippleClock", 0f)
 
             RenderableManager.Builder(1)
                 .boundingBox(Box(0f, 0f, 0f, 1f, 1f, 1f))
@@ -194,6 +222,7 @@ class FilamentRenderer(assets: AssetManager) {
                 destroySwapChain()
                 surface = newSurface
                 swapChain = engine.createSwapChain(newSurface)
+                resetFpsSampling()
             }
             resize(width, height)
             updateFrameScheduling()
@@ -233,7 +262,9 @@ class FilamentRenderer(assets: AssetManager) {
 
         fun setResumed(resumed: Boolean) {
             if (destroyed) return
+            if (this.resumed == resumed) return
             this.resumed = resumed
+            resetFpsSampling()
             updateFrameScheduling()
         }
 
@@ -258,17 +289,11 @@ class FilamentRenderer(assets: AssetManager) {
                 sphereRadius = SPHERE_RADIUS,
             ) ?: return
             val rippleDirection = (hit - SPHERE_CENTER).normalized() ?: return
-
-            materialInstance.setParameter(
-                "rippleOrigin",
-                rippleDirection.x.toFloat(),
-                rippleDirection.y.toFloat(),
-                rippleDirection.z.toFloat(),
-            )
-            materialInstance.setParameter("rippleTime", 0f)
-            materialInstance.setParameter("rippleActive", 1f)
-            rippleStartTimeNanos = System.nanoTime()
-            rippleActive = true
+            val nowNanos = System.nanoTime()
+            rippleStore.add(rippleDirection, nowNanos)
+            uploadRippleParameters(nowNanos)
+            updateRippleClock(nowNanos)
+            rippleClockNeedsUpdate = true
         }
 
         override fun doFrame(frameTimeNanos: Long) {
@@ -276,10 +301,11 @@ class FilamentRenderer(assets: AssetManager) {
             val currentSwapChain = swapChain
             if (!canRender() || currentSwapChain == null) return
 
-            updateRipple(frameTimeNanos)
+            updateRipples(frameTimeNanos)
             if (renderer.beginFrame(currentSwapChain, frameTimeNanos)) {
                 renderer.render(view)
                 renderer.endFrame()
+                recordRenderedFrame(frameTimeNanos)
             }
             updateFrameScheduling()
         }
@@ -341,19 +367,72 @@ class FilamentRenderer(assets: AssetManager) {
                 engine.flushAndWait()
             }
             swapChain = null
+            resetFpsSampling()
         }
 
-        private fun updateRipple(frameTimeNanos: Long) {
-            if (!rippleActive) return
-            val elapsedSeconds = (
-                (frameTimeNanos - rippleStartTimeNanos).coerceAtLeast(0L) * NANOS_TO_SECONDS
-            ).toFloat()
-            if (elapsedSeconds >= RIPPLE_LIFETIME_SECONDS) {
-                materialInstance.setParameter("rippleTime", RIPPLE_LIFETIME_SECONDS)
-                materialInstance.setParameter("rippleActive", 0f)
-                rippleActive = false
-            } else {
-                materialInstance.setParameter("rippleTime", elapsedSeconds)
+        private fun uploadRippleParameters(nowNanos: Long) {
+            for (slot in 0 until MAX_ACTIVE_RIPPLES) {
+                val parameterOffset = slot * RIPPLE_PARAMETER_COMPONENTS
+                if (rippleStore.isActive(slot, nowNanos)) {
+                    rippleParameters[parameterOffset] = rippleStore.originX(slot)
+                    rippleParameters[parameterOffset + 1] = rippleStore.originY(slot)
+                    rippleParameters[parameterOffset + 2] = rippleStore.originZ(slot)
+                    rippleParameters[parameterOffset + RIPPLE_START_COMPONENT] =
+                        secondsSinceRippleEpoch(rippleStore.startTimeNanos(slot))
+                } else {
+                    rippleParameters[parameterOffset + RIPPLE_START_COMPONENT] =
+                        INACTIVE_RIPPLE_START_SECONDS
+                }
+            }
+            materialInstance.setParameter(
+                "ripples",
+                FloatElement.FLOAT4,
+                rippleParameters,
+                0,
+                MAX_ACTIVE_RIPPLES,
+            )
+        }
+
+        private fun updateRipples(frameTimeNanos: Long) {
+            if (!rippleClockNeedsUpdate) return
+            updateRippleClock(frameTimeNanos)
+            if (!rippleStore.hasActive(frameTimeNanos)) rippleClockNeedsUpdate = false
+        }
+
+        private fun updateRippleClock(nowNanos: Long) {
+            materialInstance.setParameter("rippleClock", secondsSinceRippleEpoch(nowNanos))
+        }
+
+        private fun secondsSinceRippleEpoch(timeNanos: Long) =
+            ((timeNanos - rippleEpochNanos).coerceAtLeast(0L) * NANOS_TO_SECONDS).toFloat()
+
+        private fun recordRenderedFrame(frameTimeNanos: Long) {
+            if (fpsSampleStartNanos == 0L) {
+                fpsSampleStartNanos = frameTimeNanos
+                renderedFramesInSample = 0
+                return
+            }
+
+            renderedFramesInSample++
+            val elapsedNanos = frameTimeNanos - fpsSampleStartNanos
+            if (elapsedNanos < FPS_SAMPLE_INTERVAL_NANOS) return
+
+            val fps = ((renderedFramesInSample * NANOS_PER_SECOND + elapsedNanos / 2) /
+                elapsedNanos).toInt()
+            if (fps != lastPublishedFps) {
+                lastPublishedFps = fps
+                publishFps(fps)
+            }
+            fpsSampleStartNanos = frameTimeNanos
+            renderedFramesInSample = 0
+        }
+
+        private fun resetFpsSampling() {
+            fpsSampleStartNanos = 0L
+            renderedFramesInSample = 0
+            if (lastPublishedFps != 0) {
+                lastPublishedFps = 0
+                publishFps(0)
             }
         }
 
@@ -392,8 +471,12 @@ class FilamentRenderer(assets: AssetManager) {
             const val VERTICAL_FOV_DEGREES = 45.0
             const val FRAMING_MARGIN = 1.18
             const val SPHERE_RADIUS = 1.0
-            const val RIPPLE_LIFETIME_SECONDS = 3f
+            const val RIPPLE_PARAMETER_COMPONENTS = 4
+            const val RIPPLE_START_COMPONENT = 3
+            const val INACTIVE_RIPPLE_START_SECONDS = -10f
             const val NANOS_TO_SECONDS = 1.0 / 1_000_000_000.0
+            const val NANOS_PER_SECOND = 1_000_000_000L
+            const val FPS_SAMPLE_INTERVAL_NANOS = 1_000_000_000L
             val SPHERE_CENTER = Vector3(0.0, 0.0, 0.0)
 
             fun createVertexBufferData(mesh: SphereMeshData): ByteBuffer =

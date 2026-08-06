@@ -2,19 +2,31 @@ package com.yavin.reachoutandtouchscreen
 
 import androidx.compose.foundation.AndroidExternalSurface
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -25,7 +37,8 @@ import kotlinx.coroutines.awaitCancellation
 fun FilamentScene(modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
-    val renderer = remember { FilamentRenderer(context.assets) }
+    var fps by remember { mutableIntStateOf(0) }
+    val renderer = remember { FilamentRenderer(context.assets) { fps = it } }
     val touchAreaSize = remember { mutableStateOf(IntSize.Zero) }
 
     DisposableEffect(renderer, lifecycleOwner) {
@@ -46,41 +59,54 @@ fun FilamentScene(modifier: Modifier = Modifier) {
         }
     }
 
-    AndroidExternalSurface(
-        modifier = modifier
-            .fillMaxSize()
-            .onSizeChanged { touchAreaSize.value = it }
-            .pointerInput(renderer) {
-                awaitEachGesture {
-                    val down = awaitFirstDown(requireUnconsumed = false)
-                    val size = touchAreaSize.value
-                    renderer.onTouch(
-                        TouchInput(
-                            x = down.position.x.toDouble(),
-                            y = down.position.y.toDouble(),
-                            touchAreaWidth = size.width,
-                            touchAreaHeight = size.height,
-                        ),
-                    )
-                    waitForUpOrCancellation()
+    Box(modifier = modifier.fillMaxSize()) {
+        AndroidExternalSurface(
+            modifier = Modifier
+                .fillMaxSize()
+                .onSizeChanged { touchAreaSize.value = it }
+                .pointerInput(renderer) {
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        val size = touchAreaSize.value
+                        renderer.onTouch(
+                            TouchInput(
+                                x = down.position.x.toDouble(),
+                                y = down.position.y.toDouble(),
+                                touchAreaWidth = size.width,
+                                touchAreaHeight = size.height,
+                            ),
+                        )
+                        waitForUpOrCancellation()
+                    }
+                },
+            isOpaque = true,
+        ) {
+            onSurface { surface, width, height ->
+                renderer.attachSurface(surface, width, height)
+                surface.onChanged { newWidth, newHeight ->
+                    renderer.resize(newWidth, newHeight)
                 }
-            },
-        isOpaque = true,
-    ) {
-        onSurface { surface, width, height ->
-            renderer.attachSurface(surface, width, height)
-            surface.onChanged { newWidth, newHeight ->
-                renderer.resize(newWidth, newHeight)
-            }
-            surface.onDestroyed {
-                renderer.detachSurface(surface)
-            }
+                surface.onDestroyed {
+                    renderer.detachSurface(surface)
+                }
 
-            try {
-                awaitCancellation()
-            } finally {
-                renderer.detachSurface(surface)
+                try {
+                    awaitCancellation()
+                } finally {
+                    renderer.detachSurface(surface)
+                }
             }
         }
+
+        Text(
+            text = if (fps > 0) "FPS: $fps" else "FPS: --",
+            color = Color.White,
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .statusBarsPadding()
+                .padding(12.dp)
+                .background(Color.Black.copy(alpha = 0.62f), RoundedCornerShape(6.dp))
+                .padding(horizontal = 8.dp, vertical = 4.dp),
+        )
     }
 }

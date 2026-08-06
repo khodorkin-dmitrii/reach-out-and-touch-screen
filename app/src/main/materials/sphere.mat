@@ -5,9 +5,8 @@ material {
         { type : float4, name : baseColor },
         { type : float, name : roughness },
         { type : float, name : metallic },
-        { type : float3, name : rippleOrigin },
-        { type : float, name : rippleTime },
-        { type : float, name : rippleActive }
+        { type : float4[8], name : ripples },
+        { type : float, name : rippleClock }
     ],
     requires : [
         position,
@@ -21,20 +20,24 @@ fragment {
         material.roughness = materialParams.roughness;
         material.metallic = materialParams.metallic;
 
+        float3 surfaceDirection = normalize(getUserWorldPosition());
         float ripple = 0.0;
-        if (materialParams.rippleActive > 0.5) {
-            float3 surfaceDirection = normalize(getUserWorldPosition());
-            float angularDistance = acos(clamp(
-                dot(surfaceDirection, materialParams.rippleOrigin),
-                -1.0,
-                1.0
-            ));
-            float frontDistance = 1.12 * materialParams.rippleTime;
-            float distanceFromFront = angularDistance - frontDistance;
-            float band = exp(-0.5 * pow(distanceFromFront / 0.085, 2.0));
-            float damping = exp(-0.55 * materialParams.rippleTime) *
-                (1.0 - smoothstep(2.55, 2.90, materialParams.rippleTime));
-            ripple = band * damping;
+        for (int slot = 0; slot < 8; slot++) {
+            float4 rippleData = materialParams.ripples[slot];
+            float rippleTime = materialParams.rippleClock - rippleData.w;
+            if (rippleData.w >= 0.0 && rippleTime >= 0.0 && rippleTime < 3.0) {
+                float angularDistance = acos(clamp(
+                    dot(surfaceDirection, rippleData.xyz),
+                    -1.0,
+                    1.0
+                ));
+                float frontDistance = 1.12 * rippleTime;
+                float distanceFromFront = angularDistance - frontDistance;
+                float band = exp(-0.5 * pow(distanceFromFront / 0.085, 2.0));
+                float damping = exp(-0.55 * rippleTime) *
+                    (1.0 - smoothstep(2.55, 2.90, rippleTime));
+                ripple = max(ripple, band * damping);
+            }
         }
 
         material.baseColor.rgb = mix(
