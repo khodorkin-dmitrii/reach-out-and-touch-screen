@@ -140,14 +140,4 @@ Run the current automated checks with:
 
 No API keys or external services are required.
 
-## ⚠️ Current limitations
-
-- Active ripple do not yet survive Activity recreation caused by orientation changes.
-- Ripple are created by sequential touches; true simultaneous multitouch is not implemented.
-- The current effect is material-based and does not deform the sphere geometry.
-- Lighting is static and cannot yet be controlled by the user.
-- No physical-device performance baseline has been published yet.
-
----
-
 <p align="center"><em>Touch the surface and watch it respond.</em></p>
