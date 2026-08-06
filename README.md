@@ -1,4 +1,4 @@
-# 🌊 Reach Out and Touch Screen - interactive Android 3D ripple playground
+# 🌊 Reach Out and Touch Screen \n interactive Android 3D ripple playground
 
 <table>
   <tr>
@@ -31,8 +31,7 @@
       <h2>🎥 Demo</h2>
       <a>
         <img src="./docs/demo.gif" alt="Reach Out and Touch Screen demo" width="100%">
-      </a>
-      <p><em>Demo capture will be added during the portfolio polish milestone.</em></p>
+      </a>      
     </td>
   </tr>
   <tr>
