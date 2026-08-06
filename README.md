@@ -1,4 +1,6 @@
-# 🌊 Reach Out and Touch Screen \n interactive Android 3D ripple playground
+# 🌊 Reach Out and Touch Screen 
+
+interactive Android 3D ripple playground
 
 <table>
   <tr>
