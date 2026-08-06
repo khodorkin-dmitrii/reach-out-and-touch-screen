@@ -21,7 +21,7 @@ fragment {
         material.metallic = materialParams.metallic;
 
         float3 surfaceDirection = normalize(getUserWorldPosition());
-        float ripple = 0.0;
+        float combinedWave = 0.0;
         for (int slot = 0; slot < 8; slot++) {
             float4 rippleData = materialParams.ripples[slot];
             float rippleTime = materialParams.rippleClock - rippleData.w;
@@ -32,21 +32,34 @@ fragment {
                     1.0
                 ));
                 float frontDistance = 1.12 * rippleTime;
-                float distanceFromFront = angularDistance - frontDistance;
-                float band = exp(-0.5 * pow(distanceFromFront / 0.085, 2.0));
-                float damping = exp(-0.55 * rippleTime) *
+                float x = (angularDistance - frontDistance) / 0.085;
+                float envelope = exp(-0.5 * x * x);
+                float signedWave = (1.0 - x * x) * envelope;
+                float timeDamping = exp(-0.55 * rippleTime) *
                     (1.0 - smoothstep(2.55, 2.90, rippleTime));
-                ripple = max(ripple, band * damping);
+                combinedWave += signedWave * timeDamping;
             }
         }
 
+        float displayWave = tanh(combinedWave);
+        float crest = max(displayWave, 0.0);
+        float trough = max(-displayWave, 0.0);
         material.baseColor.rgb = mix(
             material.baseColor.rgb,
             vec3(0.05, 0.85, 1.0),
-            min(1.0, ripple * 1.4)
+            min(1.0, crest * 1.4)
         );
-        material.roughness = max(0.08, material.roughness - ripple * 0.18);
-        material.emissive = vec4(vec3(0.0, 1.6, 4.0) * ripple, 1.0);
+        material.baseColor.rgb = mix(
+            material.baseColor.rgb,
+            vec3(0.04, 0.03, 0.20),
+            min(1.0, trough * 0.9)
+        );
+        material.roughness = clamp(
+            material.roughness - crest * 0.18 + trough * 0.14,
+            0.08,
+            1.0
+        );
+        material.emissive = vec4(vec3(0.0, 1.6, 4.0) * crest, 1.0);
         prepareMaterial(material);
     }
 }
