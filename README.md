@@ -76,7 +76,7 @@ The current version already demonstrates the core interaction:
 
 The ripple effect currently changes material color, roughness, and emissive intensity. It does not yet modify vertex positions or surface normals, so the sphere's silhouette remains unchanged.
 
-One known lifecycle issue remains: active ripple are lost when an orientation change recreates the Activity. Filament resources are recreated correctly, but the short-lived logical ripple state is not retained yet.
+Active ripples retain their logical age, position, and slot identity when an orientation change recreates the Activity. Filament and GPU resources are still recreated for each Activity instance.
 
 ## 📍 Roadmap / TODO
 

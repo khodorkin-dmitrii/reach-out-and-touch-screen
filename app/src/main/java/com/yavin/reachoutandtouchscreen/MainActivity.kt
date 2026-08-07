@@ -4,10 +4,13 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.viewModels
 import com.google.android.filament.Filament
 import com.yavin.reachoutandtouchscreen.ui.theme.ReachOutAndTouchscreenTheme
 
 class MainActivity : ComponentActivity() {
+    private val rippleStateViewModel by viewModels<RippleStateViewModel>()
+
     companion object {
         init {
             Filament.init()
@@ -19,7 +22,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             ReachOutAndTouchscreenTheme {
-                FilamentScene()
+                FilamentScene(rippleStateViewModel = rippleStateViewModel)
             }
         }
     }

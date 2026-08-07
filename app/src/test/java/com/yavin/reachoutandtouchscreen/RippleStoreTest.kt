@@ -111,6 +111,125 @@ class RippleStoreTest {
         assertFalse(store.isActive(0, nowNanos = 5_000_000_100L))
     }
 
+    @Test
+    fun snapshotPreservesSlotOriginAndAbsoluteStartTime() {
+        val store = RippleStore(capacity = 3, lifetimeNanos = 100L)
+        store.add(ORIGIN_A, 10L)
+        store.add(ORIGIN_B, 20L)
+
+        val snapshot = store.snapshot(nowNanos = 30L)
+
+        assertEquals(
+            listOf(
+                RippleSnapshotEntry(0, 1f, 0f, 0f, 10L),
+                RippleSnapshotEntry(1, 0f, 1f, 0f, 20L),
+            ),
+            snapshot.entries,
+        )
+    }
+
+    @Test
+    fun restorePreservesActiveRippleAndSlotIdentity() {
+        val original = RippleStore(capacity = 3, lifetimeNanos = 100L)
+        original.add(ORIGIN_A, 10L)
+        original.add(ORIGIN_B, 20L)
+        val restored = RippleStore(capacity = 3, lifetimeNanos = 100L)
+
+        restored.restore(original.snapshot(nowNanos = 30L), nowNanos = 40L)
+
+        assertTrue(restored.isActive(0, 40L))
+        assertTrue(restored.isActive(1, 40L))
+        assertSlot(restored, 0, ORIGIN_A, 10L)
+        assertSlot(restored, 1, ORIGIN_B, 20L)
+    }
+
+    @Test
+    fun rippleExpiredBetweenSnapshotAndRestoreIsDiscarded() {
+        val original = RippleStore(capacity = 2, lifetimeNanos = 100L)
+        original.add(ORIGIN_A, 10L)
+        val snapshot = original.snapshot(nowNanos = 50L)
+        val restored = RippleStore(capacity = 2, lifetimeNanos = 100L)
+
+        restored.restore(snapshot, nowNanos = 110L)
+
+        assertEquals(0, restored.activeCount(nowNanos = 110L))
+    }
+
+    @Test
+    fun partialExpiryRestoresOnlyRemainingOriginalSlots() {
+        val original = RippleStore(capacity = 3, lifetimeNanos = 100L)
+        original.add(ORIGIN_A, 10L)
+        original.add(ORIGIN_B, 60L)
+        val restored = RippleStore(capacity = 3, lifetimeNanos = 100L)
+
+        restored.restore(original.snapshot(nowNanos = 90L), nowNanos = 120L)
+
+        assertFalse(restored.isActive(0, 120L))
+        assertTrue(restored.isActive(1, 120L))
+        assertSlot(restored, 1, ORIGIN_B, 60L)
+    }
+
+    @Test
+    fun emptySnapshotRestoresEmptyStore() {
+        val restored = RippleStore(capacity = 3, lifetimeNanos = 100L)
+
+        restored.restore(RippleSnapshot.Empty, nowNanos = 50L)
+
+        assertEquals(0, restored.activeCount(nowNanos = 50L))
+    }
+
+    @Test
+    fun replacementPolicyRemainsDeterministicAfterRestore() {
+        val snapshot = RippleSnapshot(
+            listOf(
+                RippleSnapshotEntry(0, 1f, 0f, 0f, 10L),
+                RippleSnapshotEntry(1, 0f, 1f, 0f, 10L),
+                RippleSnapshotEntry(2, 0f, 0f, 1f, 20L),
+            ),
+        )
+        val restored = RippleStore(capacity = 3, lifetimeNanos = 1_000L)
+        restored.restore(snapshot, nowNanos = 30L)
+
+        assertEquals(0, restored.add(ORIGIN_D, startTimeNanos = 40L))
+        assertSlot(restored, 0, ORIGIN_D, 40L)
+        assertSlot(restored, 1, ORIGIN_B, 10L)
+    }
+
+    @Test
+    fun snapshotIsIndependentFromLaterStoreMutation() {
+        val store = RippleStore(capacity = 1, lifetimeNanos = 100L)
+        store.add(ORIGIN_A, 10L)
+
+        val snapshot = store.snapshot(nowNanos = 20L)
+        store.add(ORIGIN_B, 30L)
+
+        assertEquals(
+            RippleSnapshotEntry(0, 1f, 0f, 0f, 10L),
+            snapshot.entries.single(),
+        )
+    }
+
+    @Test
+    fun restoredAgeUsesAbsoluteMonotonicStartTime() {
+        val startNanos = 1_000_000_000L
+        val restoreNanos = 2_250_000_000L
+        val snapshot = RippleSnapshot(
+            listOf(RippleSnapshotEntry(0, 1f, 0f, 0f, startNanos)),
+        )
+        val restored = RippleStore(capacity = 1, lifetimeNanos = 3_000_000_000L)
+        restored.restore(snapshot, nowNanos = restoreNanos)
+        val epochNanos = rippleEpochForRestore(
+            nowNanos = restoreNanos,
+            earliestActiveStartTimeNanos = restored.earliestActiveStartTimeNanos(restoreNanos),
+        )
+
+        val shaderAge = rippleSecondsSinceEpoch(restoreNanos, epochNanos) -
+            rippleSecondsSinceEpoch(restored.startTimeNanos(0), epochNanos)
+
+        assertEquals(1.25f, shaderAge, 0.000_001f)
+        assertTrue(rippleSecondsSinceEpoch(restored.startTimeNanos(0), epochNanos) >= 0f)
+    }
+
     private fun assertSlot(
         store: RippleStore,
         slot: Int,

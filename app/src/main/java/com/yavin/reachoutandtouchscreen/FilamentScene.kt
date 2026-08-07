@@ -34,11 +34,20 @@ import kotlinx.coroutines.awaitCancellation
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun FilamentScene(modifier: Modifier = Modifier) {
+internal fun FilamentScene(
+    rippleStateViewModel: RippleStateViewModel,
+    modifier: Modifier = Modifier,
+) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     var fps by remember { mutableIntStateOf(0) }
-    val renderer = remember { FilamentRenderer(context.assets) { fps = it } }
+    val renderer = remember {
+        FilamentRenderer(
+            assets = context.assets,
+            initialRippleSnapshot = rippleStateViewModel.snapshot(),
+            onFpsChanged = { fps = it },
+        )
+    }
     val touchAreaSize = remember { mutableStateOf(IntSize.Zero) }
 
     DisposableEffect(renderer, lifecycleOwner) {
@@ -55,7 +64,7 @@ fun FilamentScene(modifier: Modifier = Modifier) {
 
         onDispose {
             lifecycle.removeObserver(observer)
-            renderer.destroy()
+            rippleStateViewModel.retain(renderer.snapshotAndDestroy())
         }
     }
 

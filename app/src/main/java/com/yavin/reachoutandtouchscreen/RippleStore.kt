@@ -79,6 +79,50 @@ internal class RippleStore(
         return count
     }
 
+    fun snapshot(nowNanos: Long): RippleSnapshot {
+        val entries = buildList {
+            for (slot in 0 until capacity) {
+                if (isActive(slot, nowNanos)) {
+                    add(
+                        RippleSnapshotEntry(
+                            slotIndex = slot,
+                            originX = originX[slot],
+                            originY = originY[slot],
+                            originZ = originZ[slot],
+                            startTimeNanos = startTimesNanos[slot],
+                        ),
+                    )
+                }
+            }
+        }
+        return RippleSnapshot(entries)
+    }
+
+    fun restore(snapshot: RippleSnapshot, nowNanos: Long) {
+        for (entry in snapshot.entries) {
+            require(entry.slotIndex in 0 until capacity)
+            require(!occupied[entry.slotIndex]) { "Duplicate ripple slot ${entry.slotIndex}" }
+            if (!isWithinLifetime(entry.startTimeNanos, nowNanos)) continue
+
+            val slot = entry.slotIndex
+            occupied[slot] = true
+            originX[slot] = entry.originX
+            originY[slot] = entry.originY
+            originZ[slot] = entry.originZ
+            startTimesNanos[slot] = entry.startTimeNanos
+        }
+    }
+
+    fun earliestActiveStartTimeNanos(nowNanos: Long): Long? {
+        var earliest: Long? = null
+        for (slot in 0 until capacity) {
+            if (isActive(slot, nowNanos) && (earliest == null || startTimesNanos[slot] < earliest)) {
+                earliest = startTimesNanos[slot]
+            }
+        }
+        return earliest
+    }
+
     fun originX(slot: Int): Float {
         checkSlot(slot)
         return originX[slot]
@@ -101,6 +145,11 @@ internal class RippleStore(
 
     private fun checkSlot(slot: Int) {
         require(slot in 0 until capacity)
+    }
+
+    private fun isWithinLifetime(startTimeNanos: Long, nowNanos: Long): Boolean {
+        val elapsed = if (nowNanos > startTimeNanos) nowNanos - startTimeNanos else 0L
+        return elapsed < lifetimeNanos
     }
 
     companion object {

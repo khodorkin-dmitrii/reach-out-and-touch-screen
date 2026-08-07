@@ -33,8 +33,9 @@ import java.util.concurrent.CountDownLatch
  * creation off the UI thread while preserving Filament's single-thread access requirement.
  */
 @MainThread
-class FilamentRenderer(
+internal class FilamentRenderer(
     assets: AssetManager,
+    initialRippleSnapshot: RippleSnapshot,
     private val onFpsChanged: (Int) -> Unit,
 ) {
     private val renderThread = HandlerThread("FilamentRenderer").apply { start() }
@@ -45,7 +46,7 @@ class FilamentRenderer(
     private var acceptingCalls = true
 
     init {
-        handler.post { state = RenderState(assets, ::publishFps) }
+        handler.post { state = RenderState(assets, initialRippleSnapshot, ::publishFps) }
     }
 
     fun attachSurface(surface: Surface, width: Int, height: Int) {
@@ -68,19 +69,24 @@ class FilamentRenderer(
         post { onTouch(touch) }
     }
 
-    fun destroy() {
+    fun snapshotAndDestroy(): RippleSnapshot {
         checkMainThread()
-        if (!acceptingCalls) return
+        if (!acceptingCalls) return RippleSnapshot.Empty
         acceptingCalls = false
-        runSynchronously(allowAfterClose = true) { destroy() }
+        var snapshot = RippleSnapshot.Empty
+        runSynchronously(allowAfterClose = true) {
+            snapshot = captureRippleSnapshot(System.nanoTime())
+            destroy()
+        }
         renderThread.quitSafely()
+        return snapshot
     }
 
     private fun post(block: RenderState.() -> Unit) {
         checkMainThread()
         if (!acceptingCalls) return
         handler.post {
-            if (acceptingCalls) state.block()
+            state.block()
         }
     }
 
@@ -115,6 +121,7 @@ class FilamentRenderer(
 
     private class RenderState(
         private val assets: AssetManager,
+        initialRippleSnapshot: RippleSnapshot,
         private val publishFps: (Int) -> Unit,
     ) : Choreographer.FrameCallback {
         private val engine = Engine.create()
@@ -149,8 +156,16 @@ class FilamentRenderer(
         private var destroyed = false
         private var width = 0
         private var height = 0
-        private val rippleEpochNanos = System.nanoTime()
-        private val rippleStore = RippleStore()
+        private val initialRippleTimeNanos = System.nanoTime()
+        private val rippleStore = RippleStore().apply {
+            restore(initialRippleSnapshot, initialRippleTimeNanos)
+        }
+        private val rippleEpochNanos = rippleEpochForRestore(
+            nowNanos = initialRippleTimeNanos,
+            earliestActiveStartTimeNanos = rippleStore.earliestActiveStartTimeNanos(
+                initialRippleTimeNanos,
+            ),
+        )
         private val rippleParameters = FloatArray(MAX_ACTIVE_RIPPLES * RIPPLE_PARAMETER_COMPONENTS)
         private var rippleClockNeedsUpdate = false
         private val projectionMatrix = DoubleArray(16)
@@ -191,6 +206,12 @@ class FilamentRenderer(
                 MAX_ACTIVE_RIPPLES,
             )
             materialInstance.setParameter("rippleClock", 0f)
+
+            if (rippleStore.hasActive(initialRippleTimeNanos)) {
+                uploadRippleParameters(initialRippleTimeNanos)
+                updateRippleClock(initialRippleTimeNanos)
+                rippleClockNeedsUpdate = true
+            }
 
             RenderableManager.Builder(1)
                 .boundingBox(Box(0f, 0f, 0f, 1f, 1f, 1f))
@@ -310,6 +331,8 @@ class FilamentRenderer(
             updateFrameScheduling()
         }
 
+        fun captureRippleSnapshot(nowNanos: Long): RippleSnapshot = rippleStore.snapshot(nowNanos)
+
         fun destroy() {
             if (destroyed) return
             destroyed = true
@@ -404,7 +427,7 @@ class FilamentRenderer(
         }
 
         private fun secondsSinceRippleEpoch(timeNanos: Long) =
-            ((timeNanos - rippleEpochNanos).coerceAtLeast(0L) * NANOS_TO_SECONDS).toFloat()
+            rippleSecondsSinceEpoch(timeNanos, rippleEpochNanos)
 
         private fun recordRenderedFrame(frameTimeNanos: Long) {
             if (fpsSampleStartNanos == 0L) {
@@ -474,7 +497,6 @@ class FilamentRenderer(
             const val RIPPLE_PARAMETER_COMPONENTS = 4
             const val RIPPLE_START_COMPONENT = 3
             const val INACTIVE_RIPPLE_START_SECONDS = -10f
-            const val NANOS_TO_SECONDS = 1.0 / 1_000_000_000.0
             const val NANOS_PER_SECOND = 1_000_000_000L
             const val FPS_SAMPLE_INTERVAL_NANOS = 1_000_000_000L
             val SPHERE_CENTER = Vector3(0.0, 0.0, 0.0)
@@ -499,3 +521,11 @@ class FilamentRenderer(
         }
     }
 }
+
+internal fun rippleSecondsSinceEpoch(timeNanos: Long, epochNanos: Long): Float =
+    ((timeNanos - epochNanos).coerceAtLeast(0L) / 1_000_000_000.0).toFloat()
+
+internal fun rippleEpochForRestore(
+    nowNanos: Long,
+    earliestActiveStartTimeNanos: Long?,
+): Long = minOf(nowNanos, earliestActiveStartTimeNanos ?: nowNanos)
