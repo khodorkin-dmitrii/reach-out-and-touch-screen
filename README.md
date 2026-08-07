@@ -85,13 +85,13 @@ Active ripples retain their logical age, position, and slot identity when an ori
 - [x] Convert screen touches into world-space rays and sphere intersections
 - [x] Add one touch-driven ripple
 - [x] Support up to eight sequential ripple with bounded storage
+- [x] Add a short demo GIF or video and complete portfolio polish
 - [x] Add signed linear wave interference
+- [x] Preserve active ripple across configuration changes
 - [ ] Add true simultaneous multitouch support
-- [ ] Preserve active ripple across configuration changes
 - [ ] Prototype GPU vertex displacement and evaluate sphere mesh density
 - [ ] Add a minimal interactive lighting experiment
 - [ ] Run repeatable validation and performance checks on a physical Android device
-- [ ] Add a short demo GIF or video and complete portfolio polish
 
 ## 🧠 Key engineering decisions
 
