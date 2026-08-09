@@ -5,7 +5,7 @@ material {
         { type : float4, name : baseColor },
         { type : float, name : roughness },
         { type : float, name : metallic },
-        { type : float4[8], name : ripples },
+        { type : float4[10], name : ripples },
         { type : float, name : rippleClock }
     ],
     requires : [
@@ -22,7 +22,7 @@ fragment {
 
         float3 surfaceDirection = normalize(getUserWorldPosition());
         float combinedWave = 0.0;
-        for (int slot = 0; slot < 8; slot++) {
+        for (int slot = 0; slot < 10; slot++) {
             float4 rippleData = materialParams.ripples[slot];
             float rippleTime = materialParams.rippleClock - rippleData.w;
             if (rippleData.w >= 0.0 && rippleTime >= 0.0 && rippleTime < 3.0) {

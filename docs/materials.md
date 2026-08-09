@@ -16,3 +16,7 @@ repository root:
 The `.mat` source is authoritative. Regenerate the checked-in `.filamat` package
 whenever the Filament runtime version changes because material package formats
 are version-dependent.
+
+The CPU/material contract uses 10 fixed `float4` ripple slots. The material's
+static array and loop bound must remain aligned with `MAX_ACTIVE_RIPPLES` on the
+Kotlin side.

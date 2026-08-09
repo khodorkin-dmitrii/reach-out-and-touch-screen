@@ -1,6 +1,6 @@
 package com.yavin.reachoutandtouchscreen
 
-internal const val MAX_ACTIVE_RIPPLES = 8
+internal const val MAX_ACTIVE_RIPPLES = 10
 internal const val RIPPLE_LIFETIME_NANOS = 3_000_000_000L
 
 /**

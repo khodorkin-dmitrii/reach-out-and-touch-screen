@@ -110,7 +110,7 @@ class RippleWaveMathTest {
     }
 
     @Test
-    fun eightCoincidentRipplesRemainSafeAfterDisplayMapping() {
+    fun tenCoincidentRipplesRemainSafeAfterDisplayMapping() {
         val contributions = DoubleArray(MAX_ACTIVE_RIPPLES) {
             RippleWaveMath.contribution(angularDistanceRadians = 0.0, elapsedSeconds = 0.0)
         }
@@ -118,6 +118,14 @@ class RippleWaveMathTest {
 
         assertTrue(displayed > 0.0)
         assertTrue(displayed < 1.0)
+    }
+
+    @Test
+    fun tenthContributionParticipatesInLinearSum() {
+        val contributions = DoubleArray(MAX_ACTIVE_RIPPLES)
+        contributions[9] = 0.42
+
+        assertEquals(0.42, RippleWaveMath.linearSum(contributions), TOLERANCE)
     }
 
     private companion object {

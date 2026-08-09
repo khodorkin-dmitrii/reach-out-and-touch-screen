@@ -8,8 +8,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -75,17 +73,24 @@ internal fun FilamentScene(
                 .onSizeChanged { touchAreaSize.value = it }
                 .pointerInput(renderer) {
                     awaitEachGesture {
-                        val down = awaitFirstDown(requireUnconsumed = false)
-                        val size = touchAreaSize.value
-                        renderer.onTouch(
-                            TouchInput(
-                                x = down.position.x.toDouble(),
-                                y = down.position.y.toDouble(),
-                                touchAreaWidth = size.width,
-                                touchAreaHeight = size.height,
-                            ),
-                        )
-                        waitForUpOrCancellation()
+                        do {
+                            val event = awaitPointerEvent()
+                            val size = touchAreaSize.value
+                            forEachNewPointerDown(
+                                changes = event.changes,
+                                wasPressed = { it.previousPressed },
+                                isPressed = { it.pressed },
+                            ) { down ->
+                                renderer.onTouch(
+                                    TouchInput(
+                                        x = down.position.x.toDouble(),
+                                        y = down.position.y.toDouble(),
+                                        touchAreaWidth = size.width,
+                                        touchAreaHeight = size.height,
+                                    ),
+                                )
+                            }
+                        } while (event.changes.any { it.pressed })
                     }
                 },
             isOpaque = true,
@@ -117,5 +122,17 @@ internal fun FilamentScene(
                 .background(Color.Black.copy(alpha = 0.62f), RoundedCornerShape(6.dp))
                 .padding(horizontal = 8.dp, vertical = 4.dp),
         )
+    }
+}
+
+internal inline fun <T> forEachNewPointerDown(
+    changes: List<T>,
+    wasPressed: (T) -> Boolean,
+    isPressed: (T) -> Boolean,
+    onDown: (T) -> Unit,
+) {
+    for (index in changes.indices) {
+        val change = changes[index]
+        if (!wasPressed(change) && isPressed(change)) onDown(change)
     }
 }

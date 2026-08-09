@@ -21,7 +21,7 @@ interactive Android 3D ripple playground
       <ul>
         <li>Real-time Filament scene with a procedurally generated PBR sphere, camera, and directional light</li>
         <li>Touch coordinates converted into a world-space ray and a hit point on the sphere</li>
-        <li>Up to eight active ripple effects created by sequential touches</li>
+        <li>Up to 10 concurrent active ripple effects created by pointer-down events</li>
         <li>Bounded ripple storage with expiry, slot reuse, and deterministic oldest-first replacement</li>
         <li>Signed Ricker-wavelet profile with constructive and destructive linear interference</li>
         <li>Distinct crest and trough responses through color, roughness, and emissive material properties</li>
@@ -84,11 +84,11 @@ Active ripples retain their logical age, position, and slot identity when an ori
 - [x] Integrate Filament with Compose through `AndroidExternalSurface`
 - [x] Convert screen touches into world-space rays and sphere intersections
 - [x] Add one touch-driven ripple
-- [x] Support up to eight sequential ripple with bounded storage
+- [x] Support up to 10 concurrent active ripple with bounded storage
 - [x] Add a short demo GIF or video and complete portfolio polish
 - [x] Add signed linear wave interference
 - [x] Preserve active ripple across configuration changes
-- [ ] Add true simultaneous multitouch support
+- [x] Add true simultaneous multitouch support
 - [ ] Prototype GPU vertex displacement and evaluate sphere mesh density
 - [ ] Add a minimal interactive lighting experiment
 - [ ] Run repeatable validation and performance checks on a physical Android device
@@ -97,7 +97,9 @@ Active ripples retain their logical age, position, and slot identity when an ori
 
 - **Direct Filament API** - no SceneView or third-party scene wrapper is used.
 - **Compose and Filament have separate responsibilities** - Compose manages Android UI and input while Filament owns real-time 3D rendering.
-- **Fixed ripple capacity** - eight preallocated slots keep runtime memory predictable and avoid per-frame collection churn.
+- **One ripple per pointer down** - each new finger creates one ripple at its initial contact position; movement, release, and cancellation do not create more ripple.
+- **Simultaneous multitouch and ripple lifetime are independent** - new fingers are accepted while others remain pressed, and up to 10 ripple can remain active after those fingers are released.
+- **Fixed ripple capacity** - 10 preallocated slots keep runtime memory predictable and avoid per-frame collection churn.
 - **Analytical GPU effect** - ripple are evaluated from origin and start-time parameters instead of using a CPU simulation or simulation texture.
 - **Signed accumulation first** - individual wave contributions are summed before bounded display mapping, allowing constructive and destructive interference.
 - **Deterministic cleanup** - swap-chain lifetime follows the Android `Surface`, and renderer-owned resources are explicitly destroyed in dependency-safe order.

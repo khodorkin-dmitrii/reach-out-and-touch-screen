@@ -86,6 +86,50 @@ class RippleStoreTest {
     }
 
     @Test
+    fun defaultCapacityUsesAllTenSlotsBeforeReplacingOldest() {
+        val store = RippleStore()
+
+        assertEquals(10, MAX_ACTIVE_RIPPLES)
+        repeat(MAX_ACTIVE_RIPPLES) { index ->
+            assertEquals(index, store.add(ORIGIN_A, startTimeNanos = index.toLong()))
+        }
+
+        assertEquals(10, store.activeCount(nowNanos = 10L))
+        assertSlot(store, 9, ORIGIN_A, 9L)
+        assertEquals(0, store.add(ORIGIN_D, startTimeNanos = 10L))
+        assertSlot(store, 0, ORIGIN_D, 10L)
+        assertSlot(store, 9, ORIGIN_A, 9L)
+    }
+
+    @Test
+    fun tenSlotCapacityKeepsLowerIndexTieBreaking() {
+        val store = RippleStore()
+        repeat(MAX_ACTIVE_RIPPLES) { store.add(ORIGIN_A, startTimeNanos = 10L) }
+
+        assertEquals(0, store.add(ORIGIN_D, startTimeNanos = 11L))
+        assertSlot(store, 0, ORIGIN_D, 11L)
+        assertSlot(store, 9, ORIGIN_A, 10L)
+    }
+
+    @Test
+    fun snapshotAndRestorePreserveTenthSlotAndPartialExpiry() {
+        val original = RippleStore(lifetimeNanos = 100L)
+        repeat(MAX_ACTIVE_RIPPLES) { index ->
+            original.add(ORIGIN_A, startTimeNanos = index.toLong())
+        }
+        val snapshot = original.snapshot(nowNanos = 50L)
+        val restored = RippleStore(lifetimeNanos = 100L)
+
+        restored.restore(snapshot, nowNanos = 100L)
+
+        assertFalse(restored.isActive(0, nowNanos = 100L))
+        assertTrue(restored.isActive(9, nowNanos = 100L))
+        assertSlot(restored, 9, ORIGIN_A, 9L)
+        assertEquals(0, restored.add(ORIGIN_D, startTimeNanos = 100L))
+        assertSlot(restored, 0, ORIGIN_D, 100L)
+    }
+
+    @Test
     fun missDoesNotAddRipple() {
         val store = RippleStore(capacity = 3, lifetimeNanos = 100L)
 
