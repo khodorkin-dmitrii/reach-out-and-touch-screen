@@ -16,6 +16,12 @@ local.properties
 .externalNativeBuild/
 .cxx/
 
+# Local NASA source maps used by the reproducible moon-texture pipeline
+tools/moon-textures/raw/
+tools/moon-textures/.venv/
+__pycache__/
+*.py[cod]
+
 # Android Studio output
 captures/
 

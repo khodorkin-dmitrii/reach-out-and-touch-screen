@@ -1,22 +1,30 @@
 material {
     name : SphereMaterial,
     shadingModel : lit,
+    flipUV : false,
     parameters : [
         { type : float4, name : baseColor },
         { type : float, name : roughness },
         { type : float, name : metallic },
+        { type : sampler2d, name : baseColorTexture },
+        { type : sampler2d, name : normalTexture },
         { type : float4[10], name : ripples },
         { type : float, name : rippleClock }
     ],
     requires : [
         position,
-        tangents
+        tangents,
+        uv0
     ]
 }
 
 fragment {
     void material(inout MaterialInputs material) {
-        material.baseColor = materialParams.baseColor;
+        float2 uv = getUV0();
+        float3 lunarBaseColor = texture(materialParams_baseColorTexture, uv).rgb;
+        float3 tangentNormal = texture(materialParams_normalTexture, uv).xyz * 2.0 - 1.0;
+        material.baseColor = vec4(lunarBaseColor * materialParams.baseColor.rgb, 1.0);
+        material.normal = normalize(tangentNormal);
         material.roughness = materialParams.roughness;
         material.metallic = materialParams.metallic;
 

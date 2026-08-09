@@ -1,6 +1,8 @@
 package com.yavin.reachoutandtouchscreen
 
 import android.content.res.AssetManager
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.Looper
@@ -19,8 +21,11 @@ import com.google.android.filament.MaterialInstance.FloatElement
 import com.google.android.filament.RenderableManager
 import com.google.android.filament.Renderer
 import com.google.android.filament.SwapChain
+import com.google.android.filament.Texture
+import com.google.android.filament.TextureSampler
 import com.google.android.filament.VertexBuffer
 import com.google.android.filament.Viewport
+import com.google.android.filament.android.TextureHelper
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.CountDownLatch
@@ -148,6 +153,16 @@ internal class FilamentRenderer(
             .build(engine)
         private val materialInstance = material.createInstance()
         private val choreographer = Choreographer.getInstance()
+        private val uploadHandler = Handler(checkNotNull(Looper.myLooper()))
+        private val textureSampler = TextureSampler(
+            TextureSampler.MinFilter.LINEAR_MIPMAP_LINEAR,
+            TextureSampler.MagFilter.LINEAR,
+            TextureSampler.WrapMode.REPEAT,
+            TextureSampler.WrapMode.CLAMP_TO_EDGE,
+            TextureSampler.WrapMode.CLAMP_TO_EDGE,
+        )
+        private val baseColorTexture = loadTexture(LUNAR_BASE_COLOR_TEXTURE)
+        private val normalTexture = loadTexture(LUNAR_NORMAL_TEXTURE)
 
         private var surface: Surface? = null
         private var swapChain: SwapChain? = null
@@ -187,13 +202,23 @@ internal class FilamentRenderer(
             materialInstance.setParameter(
                 "baseColor",
                 Colors.RgbaType.SRGB,
-                0.08f,
-                0.42f,
-                0.95f,
+                1f,
+                1f,
+                1f,
                 1f,
             )
-            materialInstance.setParameter("roughness", 0.28f)
-            materialInstance.setParameter("metallic", 0.05f)
+            materialInstance.setParameter("roughness", 0.72f)
+            materialInstance.setParameter("metallic", 0f)
+            materialInstance.setParameter(
+                LUNAR_BASE_COLOR_TEXTURE.materialParameter,
+                baseColorTexture,
+                textureSampler,
+            )
+            materialInstance.setParameter(
+                LUNAR_NORMAL_TEXTURE.materialParameter,
+                normalTexture,
+                textureSampler,
+            )
             for (slot in 0 until MAX_ACTIVE_RIPPLES) {
                 rippleParameters[slot * RIPPLE_PARAMETER_COMPONENTS + RIPPLE_START_COMPONENT] =
                     INACTIVE_RIPPLE_START_SECONDS
@@ -339,12 +364,15 @@ internal class FilamentRenderer(
             stopFrameLoop()
             destroySwapChain()
             surface = null
+            engine.flushAndWait()
 
             scene.removeEntity(sphereEntity)
             scene.removeEntity(lightEntity)
             engine.destroyEntity(sphereEntity)
             engine.destroyEntity(lightEntity)
             engine.destroyMaterialInstance(materialInstance)
+            engine.destroyTexture(baseColorTexture)
+            engine.destroyTexture(normalTexture)
             engine.destroyMaterial(material)
             engine.destroyVertexBuffer(vertexBuffer)
             engine.destroyIndexBuffer(indexBuffer)
@@ -372,7 +400,14 @@ internal class FilamentRenderer(
                 VertexBuffer.VertexAttribute.TANGENTS,
                 0,
                 VertexBuffer.AttributeType.FLOAT4,
-                3 * Float.SIZE_BYTES,
+                SphereMeshData.TANGENT_OFFSET * Float.SIZE_BYTES,
+                VERTEX_SIZE_BYTES,
+            )
+            .attribute(
+                VertexBuffer.VertexAttribute.UV0,
+                0,
+                VertexBuffer.AttributeType.FLOAT2,
+                SphereMeshData.UV_OFFSET * Float.SIZE_BYTES,
                 VERTEX_SIZE_BYTES,
             )
             .build(engine)
@@ -486,11 +521,55 @@ internal class FilamentRenderer(
                 .apply { flip() }
         }
 
+        private fun loadTexture(asset: LunarTextureAsset): Texture {
+            val bitmap = assets.open(asset.assetPath).use { stream ->
+                BitmapFactory.decodeStream(
+                    stream,
+                    null,
+                    BitmapFactory.Options().apply {
+                        inScaled = false
+                        inPreferredConfig = Bitmap.Config.ARGB_8888
+                    },
+                )
+            } ?: error("Unable to decode texture asset ${asset.assetPath}")
+            check(bitmap.width == LUNAR_TEXTURE_WIDTH && bitmap.height == LUNAR_TEXTURE_HEIGHT) {
+                "Expected ${LUNAR_TEXTURE_WIDTH}x$LUNAR_TEXTURE_HEIGHT texture ${asset.assetPath}, " +
+                    "got ${bitmap.width}x${bitmap.height}"
+            }
+
+            val texture = Texture.Builder()
+                .width(bitmap.width)
+                .height(bitmap.height)
+                .levels(mipLevelCount(bitmap.width, bitmap.height))
+                .sampler(Texture.Sampler.SAMPLER_2D)
+                .format(internalFormatFor(asset.colorSpace))
+                .usage(Texture.Usage.DEFAULT or Texture.Usage.GEN_MIPMAPPABLE)
+                .build(engine)
+            try {
+                TextureHelper.setBitmap(
+                    engine,
+                    texture,
+                    0,
+                    bitmap,
+                    uploadHandler,
+                    Runnable { bitmap.recycle() },
+                )
+                texture.generateMipmaps(engine)
+            } catch (failure: Throwable) {
+                bitmap.recycle()
+                engine.destroyTexture(texture)
+                throw failure
+            }
+            return texture
+        }
+
         private companion object {
             const val SPHERE_RINGS = 24
             const val SPHERE_SECTORS = 48
             const val VERTEX_SIZE_BYTES = SphereMeshData.FLOATS_PER_VERTEX * Float.SIZE_BYTES
             const val MATERIAL_ASSET = "materials/sphere.filamat"
+            const val LUNAR_TEXTURE_WIDTH = 2048
+            const val LUNAR_TEXTURE_HEIGHT = 1024
             const val VERTICAL_FOV_DEGREES = 45.0
             const val FRAMING_MARGIN = 1.18
             const val SPHERE_RADIUS = 1.0
@@ -521,6 +600,17 @@ internal class FilamentRenderer(
         }
     }
 }
+
+internal fun mipLevelCount(width: Int, height: Int): Int {
+    require(width > 0 && height > 0)
+    return Int.SIZE_BITS - Integer.numberOfLeadingZeros(maxOf(width, height))
+}
+
+internal fun internalFormatFor(colorSpace: TextureColorSpace): Texture.InternalFormat =
+    when (colorSpace) {
+        TextureColorSpace.SRGB -> Texture.InternalFormat.SRGB8_A8
+        TextureColorSpace.LINEAR -> Texture.InternalFormat.RGBA8
+    }
 
 internal fun rippleSecondsSinceEpoch(timeNanos: Long, epochNanos: Long): Float =
     ((timeNanos - epochNanos).coerceAtLeast(0L) / 1_000_000_000.0).toFloat()

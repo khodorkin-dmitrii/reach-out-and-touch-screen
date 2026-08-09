@@ -12,7 +12,10 @@ data class SphereMeshData(
     val vertexCount: Int get() = vertices.size / FLOATS_PER_VERTEX
 
     companion object {
-        const val FLOATS_PER_VERTEX = 7
+        const val POSITION_OFFSET = 0
+        const val TANGENT_OFFSET = 3
+        const val UV_OFFSET = 7
+        const val FLOATS_PER_VERTEX = 9
     }
 }
 
@@ -33,11 +36,16 @@ object SphereMesh {
 
         for (ring in 0..rings) {
             val latitude = -PI / 2.0 + PI * ring / rings
+            // V=0 is lunar north and V=1 is lunar south, matching top-to-bottom image rows.
+            val v = 1.0 - ring.toDouble() / rings
             val horizontalRadius = cos(latitude).toFloat()
             val y = sin(latitude).toFloat()
 
             for (sector in 0..sectors) {
-                val longitude = 2.0 * PI * sector / sectors
+                val u = sector.toDouble() / sectors
+                // NASA's map has 0 degrees longitude at U=0.5. Keep it on the camera-facing +Z
+                // hemisphere and place the duplicated equirectangular seam on the back (-Z).
+                val longitude = -PI / 2.0 + 2.0 * PI * u
                 val x = horizontalRadius * cos(longitude).toFloat()
                 val z = horizontalRadius * sin(longitude).toFloat()
 
@@ -45,6 +53,7 @@ object SphereMesh {
                 vertices[vertexOffset++] = y * radius
                 vertices[vertexOffset++] = z * radius
 
+                // T follows increasing U/east, B follows increasing V/south, and T x B = N.
                 val tangentX = -sin(longitude).toFloat()
                 val tangentZ = cos(longitude).toFloat()
                 val bitangentX = y * tangentZ
@@ -57,6 +66,8 @@ object SphereMesh {
                 )
                 tangentFrame.copyInto(vertices, vertexOffset)
                 vertexOffset += tangentFrame.size
+                vertices[vertexOffset++] = u.toFloat()
+                vertices[vertexOffset++] = v.toFloat()
             }
         }
 
@@ -145,6 +156,13 @@ object SphereMesh {
         return quaternion.apply {
             for (index in indices) this[index] /= length
             if (this[3] < 0f) for (index in indices) this[index] = -this[index]
+            if (this[3] < TANGENT_FRAME_W_BIAS) {
+                this[3] = TANGENT_FRAME_W_BIAS
+                val xyzScale = sqrt(1f - TANGENT_FRAME_W_BIAS * TANGENT_FRAME_W_BIAS)
+                for (index in 0..2) this[index] *= xyzScale
+            }
         }
     }
+
+    private const val TANGENT_FRAME_W_BIAS = 1f / Int.MAX_VALUE
 }

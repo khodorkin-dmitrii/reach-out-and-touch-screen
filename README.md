@@ -20,6 +20,7 @@ interactive Android 3D ripple playground
       <h2>✨ Current functionality</h2>
       <ul>
         <li>Real-time Filament scene with a procedurally generated PBR sphere, camera, and directional light</li>
+        <li>NASA-derived stylized lunar surface with restrained cool/warm color grading and normal-mapped terrain detail</li>
         <li>Touch coordinates converted into a world-space ray and a hit point on the sphere</li>
         <li>Up to 10 concurrent active ripple effects created by pointer-down events</li>
         <li>Bounded ripple storage with expiry, slot reuse, and deterministic oldest-first replacement</li>
@@ -76,6 +77,8 @@ The current version already demonstrates the core interaction:
 
 The ripple effect currently changes material color, roughness, and emissive intensity. It does not yet modify vertex positions or surface normals, so the sphere's silhouette remains unchanged.
 
+The lunar base-color and tangent-space normal textures are reproducibly derived from LROC imagery and LOLA elevation data in NASA's [CGI Moon Kit](https://svs.gsfc.nasa.gov/4720). The cool/warm color treatment is an artistic project grade, not a scientifically calibrated mineral map or a NASA visualization. LOLA height data contributes lighting detail through normal mapping only; it does not displace the sphere geometry. This static terrain detail is separate from any future ripple-driven vertex-displacement experiment.
+
 Active ripples retain their logical age, position, and slot identity when an orientation change recreates the Activity. Filament and GPU resources are still recreated for each Activity instance.
 
 ## 📍 Roadmap / TODO
@@ -89,6 +92,7 @@ Active ripples retain their logical age, position, and slot identity when an ori
 - [x] Add signed linear wave interference
 - [x] Preserve active ripple across configuration changes
 - [x] Add true simultaneous multitouch support
+- [x] Add a NASA-derived stylized lunar base-color and normal-mapped surface
 - [ ] Prototype GPU vertex displacement and evaluate sphere mesh density
 - [ ] Add a minimal interactive lighting experiment
 - [ ] Run repeatable validation and performance checks on a physical Android device
@@ -100,6 +104,8 @@ Active ripples retain their logical age, position, and slot identity when an ori
 - **One ripple per pointer down** - each new finger creates one ripple at its initial contact position; movement, release, and cancellation do not create more ripple.
 - **Simultaneous multitouch and ripple lifetime are independent** - new fingers are accepted while others remain pressed, and up to 10 ripple can remain active after those fingers are released.
 - **Fixed ripple capacity** - 10 preallocated slots keep runtime memory predictable and avoid per-frame collection churn.
+- **Offline lunar asset pipeline** - checked-in runtime textures are generated from official NASA LRO maps; raw source TIFFs and image-processing dependencies are not shipped in the app.
+- **Normal detail without displacement** - LOLA-derived tangent-space normals affect PBR lighting while the procedural sphere silhouette and ripple geometry remain unchanged.
 - **Analytical GPU effect** - ripple are evaluated from origin and start-time parameters instead of using a CPU simulation or simulation texture.
 - **Signed accumulation first** - individual wave contributions are summed before bounded display mapping, allowing constructive and destructive interference.
 - **Deterministic cleanup** - swap-chain lifetime follows the Android `Surface`, and renderer-owned resources are explicitly destroyed in dependency-safe order.
