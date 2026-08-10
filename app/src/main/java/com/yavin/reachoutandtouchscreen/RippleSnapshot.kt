@@ -10,11 +10,14 @@ internal data class RippleSnapshotEntry(
     val startTimeNanos: Long,
 )
 
-/** Immutable logical ripple state transferred between renderer instances. */
-internal class RippleSnapshot(entries: List<RippleSnapshotEntry>) {
+/** Immutable logical scene state transferred between renderer instances. */
+internal class RippleSnapshot(
+    entries: List<RippleSnapshotEntry>,
+    val sphereAngleRadians: Double = 0.0,
+) {
     val entries: List<RippleSnapshotEntry> = Collections.unmodifiableList(entries.toList())
 
     companion object {
-        val Empty = RippleSnapshot(emptyList())
+        val Empty = RippleSnapshot(emptyList(), sphereAngleRadians = 0.0)
     }
 }

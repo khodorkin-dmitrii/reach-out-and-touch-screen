@@ -24,6 +24,7 @@ interactive Android 3D ripple playground
         <li>Touch coordinates converted into a world-space ray and a hit point on the sphere</li>
         <li>Up to 10 concurrent active ripple effects created by pointer-down events</li>
         <li>Bounded ripple storage with expiry, slot reuse, and deterministic oldest-first replacement</li>
+        <li>The first pointer controls surface-anchored single-axis rotation with bounded inertia, while every pointer down still creates one ripple and additional pointers do not affect rotation.</li>
         <li>Signed Ricker-wavelet profile with constructive and destructive linear interference</li>
         <li>Distinct crest and trough responses through color, roughness, and emissive material properties</li>
         <li>Compose FPS overlay for lightweight runtime diagnostics</li>
@@ -93,6 +94,7 @@ Active ripples retain their logical age, position, and slot identity when an ori
 - [x] Preserve active ripple across configuration changes
 - [x] Add true simultaneous multitouch support
 - [x] Add a NASA-derived stylized lunar base-color and normal-mapped surface
+- [x] Add surface-anchored single-axis touch rotation with inertia
 - [ ] Prototype GPU vertex displacement and evaluate sphere mesh density
 - [ ] Add a minimal interactive lighting experiment
 - [ ] Run repeatable validation and performance checks on a physical Android device
@@ -106,6 +108,7 @@ Active ripples retain their logical age, position, and slot identity when an ori
 - **Fixed ripple capacity** - 10 preallocated slots keep runtime memory predictable and avoid per-frame collection churn.
 - **Offline lunar asset pipeline** - checked-in runtime textures are generated from official NASA LRO maps; raw source TIFFs and image-processing dependencies are not shipped in the app.
 - **Normal detail without displacement** - LOLA-derived tangent-space normals affect PBR lighting while the procedural sphere silhouette and ripple geometry remain unchanged.
+- **Local-space interaction state** - touch rays are inverse-transformed for picking, while local ripple origins are transformed only for GPU upload, keeping existing ripple attached to the rotating sphere.
 - **Analytical GPU effect** - ripple are evaluated from origin and start-time parameters instead of using a CPU simulation or simulation texture.
 - **Signed accumulation first** - individual wave contributions are summed before bounded display mapping, allowing constructive and destructive interference.
 - **Deterministic cleanup** - swap-chain lifetime follows the Android `Surface`, and renderer-owned resources are explicitly destroyed in dependency-safe order.

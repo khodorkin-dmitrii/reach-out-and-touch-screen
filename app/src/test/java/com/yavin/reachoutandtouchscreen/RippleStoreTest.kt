@@ -274,6 +274,23 @@ class RippleStoreTest {
         assertTrue(rippleSecondsSinceEpoch(restored.startTimeNanos(0), epochNanos) >= 0f)
     }
 
+    @Test
+    fun sceneSnapshotPreservesRotationAndLocalRippleOrigin() {
+        val original = RippleStore(capacity = 1, lifetimeNanos = 100L)
+        original.add(ORIGIN_C, startTimeNanos = 10L)
+        val rippleSnapshot = original.snapshot(nowNanos = 20L)
+        val sceneSnapshot = RippleSnapshot(
+            entries = rippleSnapshot.entries,
+            sphereAngleRadians = 1.25,
+        )
+        val restored = RippleStore(capacity = 1, lifetimeNanos = 100L)
+
+        restored.restore(sceneSnapshot, nowNanos = 30L)
+
+        assertEquals(1.25, sceneSnapshot.sphereAngleRadians, TOLERANCE)
+        assertSlot(restored, 0, ORIGIN_C, 10L)
+    }
+
     private fun assertSlot(
         store: RippleStore,
         slot: Int,

@@ -73,24 +73,57 @@ internal fun FilamentScene(
                 .onSizeChanged { touchAreaSize.value = it }
                 .pointerInput(renderer) {
                     awaitEachGesture {
-                        do {
-                            val event = awaitPointerEvent()
-                            val size = touchAreaSize.value
-                            forEachNewPointerDown(
-                                changes = event.changes,
-                                wasPressed = { it.previousPressed },
-                                isPressed = { it.pressed },
-                            ) { down ->
-                                renderer.onTouch(
-                                    TouchInput(
-                                        x = down.position.x.toDouble(),
-                                        y = down.position.y.toDouble(),
+                        var controllerId: Long? = null
+                        var controllerWasChosen = false
+                        try {
+                            do {
+                                val event = awaitPointerEvent()
+                                val size = touchAreaSize.value
+                                for (change in event.changes) {
+                                    val touch = TouchInput(
+                                        x = change.position.x.toDouble(),
+                                        y = change.position.y.toDouble(),
                                         touchAreaWidth = size.width,
                                         touchAreaHeight = size.height,
-                                    ),
-                                )
+                                    )
+                                    when {
+                                        !change.previousPressed && change.pressed -> {
+                                            val controlsRotation = !controllerWasChosen
+                                            if (controlsRotation) {
+                                                controllerId = change.id.value
+                                                controllerWasChosen = true
+                                            }
+                                            renderer.onPointerDown(
+                                                touch = touch,
+                                                controlsRotation = controlsRotation,
+                                                eventTimeNanos = change.uptimeMillis * NANOS_PER_MILLISECOND,
+                                            )
+                                        }
+
+                                        change.id.value == controllerId &&
+                                            change.previousPressed && change.pressed -> {
+                                            renderer.onRotationMove(
+                                                touch = touch,
+                                                eventTimeNanos = change.uptimeMillis * NANOS_PER_MILLISECOND,
+                                            )
+                                        }
+
+                                        change.id.value == controllerId &&
+                                            change.previousPressed && !change.pressed -> {
+                                            renderer.onRotationEnd(
+                                                touch = touch,
+                                                eventTimeNanos = change.uptimeMillis * NANOS_PER_MILLISECOND,
+                                            )
+                                            controllerId = null
+                                        }
+                                    }
+                                }
+                            } while (event.changes.any { it.pressed })
+                        } finally {
+                            if (controllerId != null) {
+                                renderer.onRotationCancel()
                             }
-                        } while (event.changes.any { it.pressed })
+                        }
                     }
                 },
             isOpaque = true,
@@ -124,6 +157,8 @@ internal fun FilamentScene(
         )
     }
 }
+
+private const val NANOS_PER_MILLISECOND = 1_000_000L
 
 internal inline fun <T> forEachNewPointerDown(
     changes: List<T>,
