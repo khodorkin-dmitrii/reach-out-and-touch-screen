@@ -8,8 +8,10 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.AndroidExternalSurface
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -35,16 +37,21 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.yavin.reachoutandtouchscreen.ui.theme.ReachOutAndTouchscreenTheme
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
 
@@ -188,58 +195,100 @@ internal fun FilamentScene(
             }
         }
 
-        Text(
-            text = if (fps > 0) "FPS: $fps" else "FPS: --",
-            color = Color.White,
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .statusBarsPadding()
-                .padding(12.dp)
-                .background(Color.Black.copy(alpha = 0.62f), RoundedCornerShape(6.dp))
-                .padding(horizontal = 8.dp, vertical = 4.dp),
+        FilamentSceneOverlay(
+            fps = fps,
+            controlsVisible = controlsVisible,
+            rippleEffectsEnabled = rippleEffectsEnabled,
+            moonTextureEnabled = moonTextureEnabled,
+            onShowControls = ::showControls,
+            onRippleEffectsChanged = {
+                rippleEffectsEnabled = it
+                showControls()
+            },
+            onMoonTextureChanged = {
+                moonTextureEnabled = it
+                showControls()
+            },
         )
+    }
+}
 
-        Box(
-            modifier = Modifier
-                .align(Alignment.BottomStart)
-                .navigationBarsPadding()
-                .padding(16.dp)
-                .width(CONTROLS_WIDTH)
-                .height(CONTROLS_HEIGHT)
-                .clickable(
-                    interactionSource = null,
-                    indication = null,
-                    onClick = ::showControls,
-                ),
+@Composable
+private fun BoxScope.FilamentSceneOverlay(
+    fps: Int,
+    controlsVisible: Boolean,
+    rippleEffectsEnabled: Boolean,
+    moonTextureEnabled: Boolean,
+    onShowControls: () -> Unit,
+    onRippleEffectsChanged: (Boolean) -> Unit,
+    onMoonTextureChanged: (Boolean) -> Unit,
+) {
+    Text(
+        text = if (fps > 0) "FPS: $fps" else "FPS: --",
+        color = Color.White,
+        modifier = Modifier
+            .align(Alignment.TopEnd)
+            .statusBarsPadding()
+            .padding(12.dp)
+            .background(Color.Black.copy(alpha = 0.62f), RoundedCornerShape(6.dp))
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+    )
+
+    SceneControls(
+        visible = controlsVisible,
+        rippleEffectsEnabled = rippleEffectsEnabled,
+        moonTextureEnabled = moonTextureEnabled,
+        onShow = onShowControls,
+        onRippleEffectsChanged = onRippleEffectsChanged,
+        onMoonTextureChanged = onMoonTextureChanged,
+        modifier = Modifier
+            .align(Alignment.BottomStart)
+            .navigationBarsPadding()
+            .padding(16.dp),
+    )
+}
+
+@Composable
+private fun SceneControls(
+    visible: Boolean,
+    rippleEffectsEnabled: Boolean,
+    moonTextureEnabled: Boolean,
+    onShow: () -> Unit,
+    onRippleEffectsChanged: (Boolean) -> Unit,
+    onMoonTextureChanged: (Boolean) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier
+            .width(CONTROLS_WIDTH)
+            .height(CONTROLS_HEIGHT)
+            .clickable(
+                interactionSource = null,
+                indication = null,
+                onClick = onShow,
+            ),
+    ) {
+        AnimatedVisibility(
+            visible = visible,
+            enter = fadeIn(animationSpec = tween(CONTROLS_FADE_MILLIS)),
+            exit = fadeOut(animationSpec = tween(CONTROLS_FADE_MILLIS)),
         ) {
-            AnimatedVisibility(
-                visible = controlsVisible,
-                enter = fadeIn(animationSpec = tween(CONTROLS_FADE_MILLIS)),
-                exit = fadeOut(animationSpec = tween(CONTROLS_FADE_MILLIS)),
+            Surface(
+                color = Color.Black.copy(alpha = 0.62f),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxSize(),
             ) {
-                Surface(
-                    color = Color.Black.copy(alpha = 0.62f),
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.fillMaxSize(),
-                ) {
-                    Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
-                        ToggleRow(
-                            label = stringResource(R.string.ripple_effects),
-                            checked = rippleEffectsEnabled,
-                            onCheckedChange = {
-                                rippleEffectsEnabled = it
-                                showControls()
-                            },
-                        )
-                        ToggleRow(
-                            label = stringResource(R.string.moon_texture),
-                            checked = moonTextureEnabled,
-                            onCheckedChange = {
-                                moonTextureEnabled = it
-                                showControls()
-                            },
-                        )
-                    }
+                Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+                    ToggleRow(
+                        label = stringResource(R.string.ripple_effects),
+                        checked = rippleEffectsEnabled,
+                        onCheckedChange = onRippleEffectsChanged,
+                    )
+                    ToggleRow(
+                        label = stringResource(R.string.moon_texture),
+                        checked = moonTextureEnabled,
+                        onCheckedChange = onMoonTextureChanged,
+                    )
                 }
             }
         }
@@ -266,6 +315,74 @@ private fun ToggleRow(
         Switch(
             checked = checked,
             onCheckedChange = onCheckedChange,
+        )
+    }
+}
+
+@Preview(name = "Filament scene controls - portrait", widthDp = 360, heightDp = 800)
+@Preview(name = "Filament scene controls - landscape", widthDp = 800, heightDp = 360)
+@Composable
+private fun FilamentScenePreview() {
+    ReachOutAndTouchscreenTheme(dynamicColor = false) {
+        Box(modifier = Modifier.fillMaxSize()) {
+            FilamentScenePlaceholder()
+            FilamentSceneOverlay(
+                fps = 60,
+                controlsVisible = true,
+                rippleEffectsEnabled = true,
+                moonTextureEnabled = false,
+                onShowControls = {},
+                onRippleEffectsChanged = {},
+                onMoonTextureChanged = {},
+            )
+        }
+    }
+}
+
+@Composable
+private fun FilamentScenePlaceholder() {
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xFF050712)),
+    ) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val sphereRadius = minOf(size.width, size.height) * 0.3f
+            val sphereCenter = center.copy(y = center.y - size.height * 0.03f)
+            drawCircle(
+                brush = Brush.radialGradient(
+                    colors = listOf(
+                        Color(0xFFD8DCE6),
+                        Color(0xFF727886),
+                        Color(0xFF181C28),
+                    ),
+                    center = sphereCenter - Offset(sphereRadius * 0.32f, sphereRadius * 0.38f),
+                    radius = sphereRadius * 1.45f,
+                ),
+                radius = sphereRadius,
+                center = sphereCenter,
+            )
+            drawCircle(
+                color = Color(0xFF19D5FF).copy(alpha = 0.8f),
+                radius = sphereRadius * 0.32f,
+                center = sphereCenter + Offset(sphereRadius * 0.22f, sphereRadius * 0.08f),
+                style = Stroke(width = 2.dp.toPx()),
+            )
+            drawCircle(
+                color = Color(0xFF19D5FF).copy(alpha = 0.38f),
+                radius = sphereRadius * 0.5f,
+                center = sphereCenter + Offset(sphereRadius * 0.22f, sphereRadius * 0.08f),
+                style = Stroke(width = 1.dp.toPx()),
+            )
+        }
+        Text(
+            text = "Filament scene placeholder",
+            color = Color.White.copy(alpha = 0.58f),
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .statusBarsPadding()
+                .padding(16.dp),
         )
     }
 }
