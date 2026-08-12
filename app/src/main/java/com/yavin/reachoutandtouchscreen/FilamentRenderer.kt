@@ -73,8 +73,17 @@ internal class FilamentRenderer(
         post { setResumed(resumed) }
     }
 
-    fun onPointerDown(touch: TouchInput, controlsRotation: Boolean, eventTimeNanos: Long) {
-        post { onPointerDown(touch, controlsRotation, eventTimeNanos) }
+    fun onPointerDown(
+        touch: TouchInput,
+        controlsRotation: Boolean,
+        createsRipple: Boolean,
+        eventTimeNanos: Long,
+    ) {
+        post { onPointerDown(touch, controlsRotation, createsRipple, eventTimeNanos) }
+    }
+
+    fun setMoonTextureBlend(blend: Float) {
+        post { setMoonTextureBlend(blend) }
     }
 
     fun onRotationMove(touch: TouchInput, eventTimeNanos: Long) {
@@ -233,13 +242,13 @@ internal class FilamentRenderer(
             materialInstance.setParameter(
                 "baseColor",
                 Colors.RgbaType.SRGB,
-                1f,
-                1f,
-                1f,
+                0.08f,
+                0.42f,
+                0.95f,
                 1f,
             )
-            materialInstance.setParameter("roughness", 0.72f)
-            materialInstance.setParameter("metallic", 0f)
+            materialInstance.setParameter("roughness", 0.28f)
+            materialInstance.setParameter("metallic", 0.05f)
             materialInstance.setParameter(
                 LUNAR_BASE_COLOR_TEXTURE.materialParameter,
                 baseColorTexture,
@@ -250,6 +259,7 @@ internal class FilamentRenderer(
                 normalTexture,
                 textureSampler,
             )
+            materialInstance.setParameter("moonTextureBlend", 1f)
             for (slot in 0 until MAX_ACTIVE_RIPPLES) {
                 rippleParameters[slot * RIPPLE_PARAMETER_COMPONENTS + RIPPLE_START_COMPONENT] =
                     INACTIVE_RIPPLE_START_SECONDS
@@ -351,6 +361,7 @@ internal class FilamentRenderer(
         fun onPointerDown(
             touch: TouchInput,
             controlsRotation: Boolean,
+            createsRipple: Boolean,
             eventTimeNanos: Long,
         ) {
             if (controlsRotation) {
@@ -360,12 +371,14 @@ internal class FilamentRenderer(
             }
             if (!canRender()) return
             val localHit = localSphereHit(touch) ?: return
-            val rippleDirection = localHit.normalized() ?: return
-            val nowNanos = System.nanoTime()
-            rippleStore.add(rippleDirection, nowNanos)
-            uploadRippleParameters(nowNanos)
-            updateRippleClock(nowNanos)
-            rippleClockNeedsUpdate = true
+            if (createsRipple) {
+                val rippleDirection = localHit.normalized() ?: return
+                val nowNanos = System.nanoTime()
+                rippleStore.add(rippleDirection, nowNanos)
+                uploadRippleParameters(nowNanos)
+                updateRippleClock(nowNanos)
+                rippleClockNeedsUpdate = true
+            }
 
             if (controlsRotation) {
                 rotationDragActive = true
@@ -374,6 +387,11 @@ internal class FilamentRenderer(
                 usingRotationFallback = false
                 angularVelocityTracker.reset(sphereAngleRadians, eventTimeNanos)
             }
+        }
+
+        fun setMoonTextureBlend(blend: Float) {
+            if (destroyed) return
+            materialInstance.setParameter("moonTextureBlend", blend.coerceIn(0f, 1f))
         }
 
         fun onRotationMove(touch: TouchInput, eventTimeNanos: Long) {

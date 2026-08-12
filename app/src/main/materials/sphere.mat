@@ -8,6 +8,7 @@ material {
         { type : float, name : metallic },
         { type : sampler2d, name : baseColorTexture },
         { type : sampler2d, name : normalTexture },
+        { type : float, name : moonTextureBlend },
         { type : float4[10], name : ripples },
         { type : float, name : rippleClock }
     ],
@@ -23,10 +24,15 @@ fragment {
         float2 uv = getUV0();
         float3 lunarBaseColor = texture(materialParams_baseColorTexture, uv).rgb;
         float3 tangentNormal = texture(materialParams_normalTexture, uv).xyz * 2.0 - 1.0;
-        material.baseColor = vec4(lunarBaseColor * materialParams.baseColor.rgb, 1.0);
-        material.normal = normalize(tangentNormal);
-        material.roughness = materialParams.roughness;
-        material.metallic = materialParams.metallic;
+        float moonBlend = materialParams.moonTextureBlend;
+        material.baseColor = vec4(mix(
+            materialParams.baseColor.rgb,
+            lunarBaseColor,
+            moonBlend
+        ), 1.0);
+        material.normal = normalize(mix(vec3(0.0, 0.0, 1.0), tangentNormal, moonBlend));
+        material.roughness = mix(materialParams.roughness, 0.72, moonBlend);
+        material.metallic = mix(materialParams.metallic, 0.0, moonBlend);
 
         float3 surfaceDirection = normalize(getUserWorldPosition());
         float combinedWave = 0.0;

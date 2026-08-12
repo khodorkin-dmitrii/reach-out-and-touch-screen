@@ -33,7 +33,9 @@ class MaterialContractTest {
         assertEquals(TextureColorSpace.LINEAR, LUNAR_NORMAL_TEXTURE.colorSpace)
         assertEquals(Texture.InternalFormat.SRGB8_A8, internalFormatFor(TextureColorSpace.SRGB))
         assertEquals(Texture.InternalFormat.RGBA8, internalFormatFor(TextureColorSpace.LINEAR))
-        assertTrue(source.contains("material.normal = normalize(tangentNormal)"))
+        assertTrue(source.contains("name : moonTextureBlend"))
+        assertTrue(source.contains("materialParams.moonTextureBlend"))
+        assertTrue(source.contains("mix(vec3(0.0, 0.0, 1.0), tangentNormal, moonBlend)"))
     }
 
     @Test
