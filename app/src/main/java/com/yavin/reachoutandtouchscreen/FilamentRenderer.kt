@@ -46,6 +46,7 @@ import kotlin.math.tan
 internal class FilamentRenderer(
     assets: AssetManager,
     initialRippleSnapshot: RippleSnapshot,
+    initialIdleRotationEnabled: Boolean,
     private val onFpsChanged: (Int) -> Unit,
 ) {
     private val renderThread = HandlerThread("FilamentRenderer").apply { start() }
@@ -56,7 +57,14 @@ internal class FilamentRenderer(
     private var acceptingCalls = true
 
     init {
-        handler.post { state = RenderState(assets, initialRippleSnapshot, ::publishFps) }
+        handler.post {
+            state = RenderState(
+                assets = assets,
+                initialRippleSnapshot = initialRippleSnapshot,
+                initialIdleRotationEnabled = initialIdleRotationEnabled,
+                publishFps = ::publishFps,
+            )
+        }
     }
 
     fun attachSurface(surface: Surface, width: Int, height: Int) {
@@ -86,6 +94,10 @@ internal class FilamentRenderer(
 
     fun setMoonTextureBlend(blend: Float) {
         post { setMoonTextureBlend(blend) }
+    }
+
+    fun setIdleRotationEnabled(enabled: Boolean) {
+        post { setIdleRotationEnabled(enabled) }
     }
 
     fun onDoubleTap(touch: TouchInput) {
@@ -157,6 +169,7 @@ internal class FilamentRenderer(
     private class RenderState(
         private val assets: AssetManager,
         initialRippleSnapshot: RippleSnapshot,
+        initialIdleRotationEnabled: Boolean,
         private val publishFps: (Int) -> Unit,
     ) : Choreographer.FrameCallback {
         private val engine = Engine.create()
@@ -234,6 +247,8 @@ internal class FilamentRenderer(
             ?.let(::wrapRadians)
             ?: 0.0
         private var angularVelocityRadiansPerSecond = 0.0
+        private var idleRotationEnabled = initialIdleRotationEnabled
+        private var lastSphereInteractionNanos = initialRippleTimeNanos
         private var lastRotationFrameTimeNanos = 0L
         private var rotationDragActive = false
         private var grabbedLocalLongitudeRadians = 0.0
@@ -365,6 +380,7 @@ internal class FilamentRenderer(
             if (this.resumed == resumed) return
             this.resumed = resumed
             lastRotationFrameTimeNanos = 0L
+            if (resumed) markSphereInteraction()
             resetFpsSampling()
             updateFrameScheduling()
         }
@@ -377,6 +393,7 @@ internal class FilamentRenderer(
         ) {
             if (!canRender()) return
             val localHit = localSphereHit(touch) ?: return
+            markSphereInteraction()
             if (controlsRotation) {
                 angularVelocityRadiansPerSecond = 0.0
                 lastRotationFrameTimeNanos = 0L
@@ -405,6 +422,13 @@ internal class FilamentRenderer(
             materialInstance.setParameter("moonTextureBlend", blend.coerceIn(0f, 1f))
         }
 
+        fun setIdleRotationEnabled(enabled: Boolean) {
+            if (destroyed || idleRotationEnabled == enabled) return
+            idleRotationEnabled = enabled
+            markSphereInteraction()
+            lastRotationFrameTimeNanos = 0L
+        }
+
         fun onDoubleTap(touch: TouchInput) {
             if (!canRender() || localSphereHit(touch) != null) return
             val tappedQuadrant = cameraFocusQuadrantFor(
@@ -425,11 +449,13 @@ internal class FilamentRenderer(
 
         fun onRotationMove(touch: TouchInput, eventTimeNanos: Long) {
             if (!rotationDragActive || !canRender()) return
+            markSphereInteraction()
             updateRotationDrag(touch, eventTimeNanos)
         }
 
         fun onRotationEnd(touch: TouchInput, eventTimeNanos: Long) {
             if (!rotationDragActive) return
+            markSphereInteraction()
             if (canRender()) updateRotationDrag(touch, eventTimeNanos)
             angularVelocityRadiansPerSecond = angularVelocityTracker
                 .velocityRadiansPerSecond(eventTimeNanos)
@@ -440,6 +466,7 @@ internal class FilamentRenderer(
         }
 
         fun onRotationCancel() {
+            if (rotationDragActive) markSphereInteraction()
             rotationDragActive = false
             angularVelocityRadiansPerSecond = 0.0
             lastRotationFrameTimeNanos = 0L
@@ -650,7 +677,18 @@ internal class FilamentRenderer(
         }
 
         private fun updateRotation(frameTimeNanos: Long) {
-            if (rotationDragActive || angularVelocityRadiansPerSecond == 0.0) {
+            if (rotationDragActive) {
+                lastRotationFrameTimeNanos = 0L
+                return
+            }
+            val usesInertia = angularVelocityRadiansPerSecond != 0.0
+            val usesIdleRotation = shouldUseIdleRotation(
+                enabled = idleRotationEnabled,
+                lastInteractionNanos = lastSphereInteractionNanos,
+                nowNanos = frameTimeNanos,
+                delayNanos = IDLE_ROTATION_DELAY_NANOS,
+            )
+            if (!usesInertia && !usesIdleRotation) {
                 lastRotationFrameTimeNanos = 0L
                 return
             }
@@ -666,8 +704,13 @@ internal class FilamentRenderer(
             if (deltaTimeSeconds == 0.0) return
 
             setSphereAngle(
-                sphereAngleRadians + angularVelocityRadiansPerSecond * deltaTimeSeconds,
+                sphereAngleRadians + if (usesInertia) {
+                    angularVelocityRadiansPerSecond * deltaTimeSeconds
+                } else {
+                    IDLE_ROTATION_SPEED_RADIANS_PER_SECOND * deltaTimeSeconds
+                },
             )
+            if (!usesInertia) return
             angularVelocityRadiansPerSecond = decayedAngularVelocity(
                 angularVelocityRadiansPerSecond,
                 ROTATION_FRICTION_PER_SECOND,
@@ -677,6 +720,10 @@ internal class FilamentRenderer(
                 angularVelocityRadiansPerSecond = 0.0
                 lastRotationFrameTimeNanos = 0L
             }
+        }
+
+        private fun markSphereInteraction() {
+            lastSphereInteractionNanos = System.nanoTime()
         }
 
         private fun setSphereAngle(angleRadians: Double) {
@@ -887,6 +934,7 @@ internal class FilamentRenderer(
             const val FPS_SAMPLE_INTERVAL_NANOS = 1_000_000_000L
             const val ROTATION_VELOCITY_WINDOW_NANOS = 120_000_000L
             const val ROTATION_FRICTION_PER_SECOND = 4.5
+            const val IDLE_ROTATION_SPEED_RADIANS_PER_SECOND = 0.15
             const val MAX_ANGULAR_VELOCITY = 8.0
             const val STOP_ANGULAR_VELOCITY = 0.025
             const val MAX_ROTATION_DELTA_TIME_SECONDS = 0.05
@@ -924,6 +972,17 @@ internal class FilamentRenderer(
         }
     }
 }
+
+internal const val IDLE_ROTATION_DELAY_NANOS = 10_000_000_000L
+
+internal fun shouldUseIdleRotation(
+    enabled: Boolean,
+    lastInteractionNanos: Long,
+    nowNanos: Long,
+    delayNanos: Long,
+): Boolean = enabled &&
+    delayNanos >= 0L &&
+    nowNanos - lastInteractionNanos >= delayNanos
 
 internal fun mipLevelCount(width: Int, height: Int): Int {
     require(width > 0 && height > 0)

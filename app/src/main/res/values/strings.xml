@@ -2,4 +2,5 @@
     <string name="app_name">ReachOut and Touchscreen</string>
     <string name="ripple_effects">Ripple effects</string>
     <string name="moon_texture">Moon texture</string>
+    <string name="idle_rotation">Idle rotation</string>
 </resources>

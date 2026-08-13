@@ -67,12 +67,14 @@ internal fun FilamentScene(
     var fps by remember { mutableIntStateOf(0) }
     var rippleEffectsEnabled by rememberSaveable { mutableStateOf(true) }
     var moonTextureEnabled by rememberSaveable { mutableStateOf(true) }
+    var idleRotationEnabled by rememberSaveable { mutableStateOf(true) }
     var controlsVisible by remember { mutableStateOf(true) }
     var controlsInteraction by remember { mutableIntStateOf(0) }
     val renderer = remember {
         FilamentRenderer(
             assets = context.assets,
             initialRippleSnapshot = rippleStateViewModel.snapshot(),
+            initialIdleRotationEnabled = idleRotationEnabled,
             onFpsChanged = { fps = it },
         )
     }
@@ -96,6 +98,10 @@ internal fun FilamentScene(
 
     LaunchedEffect(renderer, moonTextureBlend) {
         renderer.setMoonTextureBlend(moonTextureBlend)
+    }
+
+    LaunchedEffect(renderer, idleRotationEnabled) {
+        renderer.setIdleRotationEnabled(idleRotationEnabled)
     }
 
     DisposableEffect(renderer, lifecycleOwner) {
@@ -216,6 +222,7 @@ internal fun FilamentScene(
             controlsVisible = controlsVisible,
             rippleEffectsEnabled = rippleEffectsEnabled,
             moonTextureEnabled = moonTextureEnabled,
+            idleRotationEnabled = idleRotationEnabled,
             onShowControls = ::showControls,
             onRippleEffectsChanged = {
                 rippleEffectsEnabled = it
@@ -223,6 +230,10 @@ internal fun FilamentScene(
             },
             onMoonTextureChanged = {
                 moonTextureEnabled = it
+                showControls()
+            },
+            onIdleRotationChanged = {
+                idleRotationEnabled = it
                 showControls()
             },
         )
@@ -235,9 +246,11 @@ private fun BoxScope.FilamentSceneOverlay(
     controlsVisible: Boolean,
     rippleEffectsEnabled: Boolean,
     moonTextureEnabled: Boolean,
+    idleRotationEnabled: Boolean,
     onShowControls: () -> Unit,
     onRippleEffectsChanged: (Boolean) -> Unit,
     onMoonTextureChanged: (Boolean) -> Unit,
+    onIdleRotationChanged: (Boolean) -> Unit,
 ) {
     Text(
         text = if (fps > 0) "FPS: $fps" else "FPS: --",
@@ -254,9 +267,11 @@ private fun BoxScope.FilamentSceneOverlay(
         visible = controlsVisible,
         rippleEffectsEnabled = rippleEffectsEnabled,
         moonTextureEnabled = moonTextureEnabled,
+        idleRotationEnabled = idleRotationEnabled,
         onShow = onShowControls,
         onRippleEffectsChanged = onRippleEffectsChanged,
         onMoonTextureChanged = onMoonTextureChanged,
+        onIdleRotationChanged = onIdleRotationChanged,
         modifier = Modifier
             .align(Alignment.BottomStart)
             .navigationBarsPadding()
@@ -269,9 +284,11 @@ private fun SceneControls(
     visible: Boolean,
     rippleEffectsEnabled: Boolean,
     moonTextureEnabled: Boolean,
+    idleRotationEnabled: Boolean,
     onShow: () -> Unit,
     onRippleEffectsChanged: (Boolean) -> Unit,
     onMoonTextureChanged: (Boolean) -> Unit,
+    onIdleRotationChanged: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Box(
@@ -294,7 +311,7 @@ private fun SceneControls(
                 shape = RoundedCornerShape(12.dp),
                 modifier = Modifier.fillMaxSize(),
             ) {
-                Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+                Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) {
                     ToggleRow(
                         label = stringResource(R.string.ripple_effects),
                         checked = rippleEffectsEnabled,
@@ -304,6 +321,11 @@ private fun SceneControls(
                         label = stringResource(R.string.moon_texture),
                         checked = moonTextureEnabled,
                         onCheckedChange = onMoonTextureChanged,
+                    )
+                    ToggleRow(
+                        label = stringResource(R.string.idle_rotation),
+                        checked = idleRotationEnabled,
+                        onCheckedChange = onIdleRotationChanged,
                     )
                 }
             }
@@ -320,7 +342,7 @@ private fun ToggleRow(
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
-            .height(52.dp)
+            .height(44.dp)
             .clickable { onCheckedChange(!checked) },
     ) {
         Text(
@@ -347,9 +369,11 @@ private fun FilamentScenePreview() {
                 controlsVisible = true,
                 rippleEffectsEnabled = true,
                 moonTextureEnabled = false,
+                idleRotationEnabled = true,
                 onShowControls = {},
                 onRippleEffectsChanged = {},
                 onMoonTextureChanged = {},
+                onIdleRotationChanged = {},
             )
         }
     }
@@ -408,7 +432,7 @@ private const val CONTROLS_VISIBLE_MILLIS = 5_000L
 private const val CONTROLS_FADE_MILLIS = 250
 private const val MOON_TEXTURE_TRANSITION_MILLIS = 500
 private val CONTROLS_WIDTH = 240.dp
-private val CONTROLS_HEIGHT = 120.dp
+private val CONTROLS_HEIGHT = 144.dp
 
 internal inline fun <T> forEachNewPointerDown(
     changes: List<T>,
