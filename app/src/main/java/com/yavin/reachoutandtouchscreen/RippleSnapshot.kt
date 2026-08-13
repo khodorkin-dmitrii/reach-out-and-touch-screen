@@ -14,10 +14,15 @@ internal data class RippleSnapshotEntry(
 internal class RippleSnapshot(
     entries: List<RippleSnapshotEntry>,
     val sphereAngleRadians: Double = 0.0,
+    val cameraFocusQuadrant: CameraFocusQuadrant? = null,
 ) {
     val entries: List<RippleSnapshotEntry> = Collections.unmodifiableList(entries.toList())
 
     companion object {
-        val Empty = RippleSnapshot(emptyList(), sphereAngleRadians = 0.0)
+        val Empty = RippleSnapshot(
+            entries = emptyList(),
+            sphereAngleRadians = 0.0,
+            cameraFocusQuadrant = null,
+        )
     }
 }

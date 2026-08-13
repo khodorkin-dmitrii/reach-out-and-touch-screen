@@ -29,9 +29,11 @@ import com.google.android.filament.android.TextureHelper
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.CountDownLatch
+import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.sin
+import kotlin.math.tan
 
 /**
  * Main-thread facade around a single-thread-owned Filament scene.
@@ -84,6 +86,10 @@ internal class FilamentRenderer(
 
     fun setMoonTextureBlend(blend: Float) {
         post { setMoonTextureBlend(blend) }
+    }
+
+    fun onDoubleTap(touch: TouchInput) {
+        post { onDoubleTap(touch) }
     }
 
     fun onRotationMove(touch: TouchInput, eventTimeNanos: Long) {
@@ -209,6 +215,18 @@ internal class FilamentRenderer(
         private var rippleClockNeedsUpdate = false
         private val projectionMatrix = DoubleArray(16)
         private val viewMatrix = DoubleArray(16)
+        private var overviewCameraDistance = 0.0
+        private var cameraFocusQuadrant = initialRippleSnapshot.cameraFocusQuadrant
+        private var cameraVerticalFovDegrees = verticalFovFor(cameraFocusQuadrant)
+        private var cameraTargetX = targetXFor(cameraFocusQuadrant)
+        private var cameraTargetY = targetYFor(cameraFocusQuadrant)
+        private var cameraAnimationStartNanos = 0L
+        private var cameraAnimationStartFovDegrees = cameraVerticalFovDegrees
+        private var cameraAnimationStartTargetX = cameraTargetX
+        private var cameraAnimationStartTargetY = cameraTargetY
+        private var cameraAnimationEndFovDegrees = cameraVerticalFovDegrees
+        private var cameraAnimationEndTargetX = cameraTargetX
+        private var cameraAnimationEndTargetY = cameraTargetY
         private val sphereTransform = FloatArray(16)
         private val rotationAxisFrame = SphereRotationConfiguration.axisFrame
         private var sphereAngleRadians = initialRippleSnapshot.sphereAngleRadians
@@ -322,20 +340,13 @@ internal class FilamentRenderer(
             this.height = height
             val aspectRatio = width.toDouble() / height.toDouble()
             view.viewport = Viewport(0, 0, width, height)
-            camera.setProjection(
-                VERTICAL_FOV_DEGREES,
-                aspectRatio,
-                0.1,
-                100.0,
-                Camera.Fov.VERTICAL,
-            )
-            val cameraDistance = CameraFraming.distanceForSphere(
+            overviewCameraDistance = CameraFraming.distanceForSphere(
                 radius = 1.0,
                 verticalFovDegrees = VERTICAL_FOV_DEGREES,
                 aspectRatio = aspectRatio,
                 margin = FRAMING_MARGIN,
             )
-            camera.lookAt(0.0, 0.1, cameraDistance, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0)
+            applyCameraPose()
             updateFrameScheduling()
         }
 
@@ -364,13 +375,13 @@ internal class FilamentRenderer(
             createsRipple: Boolean,
             eventTimeNanos: Long,
         ) {
+            if (!canRender()) return
+            val localHit = localSphereHit(touch) ?: return
             if (controlsRotation) {
                 angularVelocityRadiansPerSecond = 0.0
                 lastRotationFrameTimeNanos = 0L
                 rotationDragActive = false
             }
-            if (!canRender()) return
-            val localHit = localSphereHit(touch) ?: return
             if (createsRipple) {
                 val rippleDirection = localHit.normalized() ?: return
                 val nowNanos = System.nanoTime()
@@ -392,6 +403,24 @@ internal class FilamentRenderer(
         fun setMoonTextureBlend(blend: Float) {
             if (destroyed) return
             materialInstance.setParameter("moonTextureBlend", blend.coerceIn(0f, 1f))
+        }
+
+        fun onDoubleTap(touch: TouchInput) {
+            if (!canRender() || localSphereHit(touch) != null) return
+            val tappedQuadrant = cameraFocusQuadrantFor(
+                x = touch.x,
+                y = touch.y,
+                viewportWidth = width,
+                viewportHeight = height,
+            )
+            cameraFocusQuadrant = nextCameraFocus(cameraFocusQuadrant, tappedQuadrant)
+            cameraAnimationStartFovDegrees = cameraVerticalFovDegrees
+            cameraAnimationStartTargetX = cameraTargetX
+            cameraAnimationStartTargetY = cameraTargetY
+            cameraAnimationEndFovDegrees = verticalFovFor(cameraFocusQuadrant)
+            cameraAnimationEndTargetX = targetXFor(cameraFocusQuadrant)
+            cameraAnimationEndTargetY = targetYFor(cameraFocusQuadrant)
+            cameraAnimationStartNanos = System.nanoTime()
         }
 
         fun onRotationMove(touch: TouchInput, eventTimeNanos: Long) {
@@ -443,6 +472,7 @@ internal class FilamentRenderer(
             val currentSwapChain = swapChain
             if (!canRender() || currentSwapChain == null) return
 
+            updateCamera(frameTimeNanos)
             updateRotation(frameTimeNanos)
             updateRipples(frameTimeNanos)
             if (renderer.beginFrame(currentSwapChain, frameTimeNanos)) {
@@ -458,6 +488,7 @@ internal class FilamentRenderer(
             return RippleSnapshot(
                 entries = rippleSnapshot.entries,
                 sphereAngleRadians = sphereAngleRadians,
+                cameraFocusQuadrant = cameraFocusQuadrant,
             )
         }
 
@@ -552,7 +583,7 @@ internal class FilamentRenderer(
                 val projectedRadius = minOf(
                     touch.touchAreaWidth,
                     touch.touchAreaHeight,
-                ) / (2.0 * FRAMING_MARGIN) * rotationAxisFrame.axis.y
+                ) / (2.0 * FRAMING_MARGIN) * cameraZoomScale() * rotationAxisFrame.axis.y
                 if (projectedRadius > 0.0) {
                     setSphereAngle(
                         sphereAngleRadians + (touch.x - lastControllerX) / projectedRadius,
@@ -562,6 +593,60 @@ internal class FilamentRenderer(
             }
             lastControllerX = touch.x
             angularVelocityTracker.add(sphereAngleRadians, eventTimeNanos)
+        }
+
+        private fun updateCamera(frameTimeNanos: Long) {
+            if (cameraAnimationStartNanos == 0L) return
+            val progress = (
+                (frameTimeNanos - cameraAnimationStartNanos).coerceAtLeast(0L).toDouble() /
+                    CAMERA_FOCUS_ANIMATION_NANOS.toDouble()
+                ).coerceAtMost(1.0)
+            val easedProgress = progress * progress * (3.0 - 2.0 * progress)
+            cameraVerticalFovDegrees = lerp(
+                cameraAnimationStartFovDegrees,
+                cameraAnimationEndFovDegrees,
+                easedProgress,
+            )
+            cameraTargetX = lerp(
+                cameraAnimationStartTargetX,
+                cameraAnimationEndTargetX,
+                easedProgress,
+            )
+            cameraTargetY = lerp(
+                cameraAnimationStartTargetY,
+                cameraAnimationEndTargetY,
+                easedProgress,
+            )
+            applyCameraPose()
+            if (progress >= 1.0) cameraAnimationStartNanos = 0L
+        }
+
+        private fun applyCameraPose() {
+            if (width <= 0 || height <= 0 || overviewCameraDistance <= 0.0) return
+            camera.setProjection(
+                cameraVerticalFovDegrees,
+                width.toDouble() / height.toDouble(),
+                0.1,
+                100.0,
+                Camera.Fov.VERTICAL,
+            )
+            camera.lookAt(
+                0.0,
+                0.1,
+                overviewCameraDistance,
+                cameraTargetX,
+                cameraTargetY,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+            )
+        }
+
+        private fun cameraZoomScale(): Double {
+            val overviewHalfFov = VERTICAL_FOV_DEGREES * PI / 360.0
+            val currentHalfFov = cameraVerticalFovDegrees * PI / 360.0
+            return tan(overviewHalfFov) / tan(currentHalfFov)
         }
 
         private fun updateRotation(frameTimeNanos: Long) {
@@ -790,6 +875,9 @@ internal class FilamentRenderer(
             const val LUNAR_TEXTURE_WIDTH = 2048
             const val LUNAR_TEXTURE_HEIGHT = 1024
             const val VERTICAL_FOV_DEGREES = 45.0
+            const val FOCUSED_VERTICAL_FOV_DEGREES = 22.0
+            const val CAMERA_FOCUS_TARGET_OFFSET = 0.48
+            const val CAMERA_FOCUS_ANIMATION_NANOS = 450_000_000L
             const val FRAMING_MARGIN = 1.18
             const val SPHERE_RADIUS = 1.0
             const val RIPPLE_PARAMETER_COMPONENTS = 4
@@ -803,6 +891,18 @@ internal class FilamentRenderer(
             const val STOP_ANGULAR_VELOCITY = 0.025
             const val MAX_ROTATION_DELTA_TIME_SECONDS = 0.05
             val SPHERE_CENTER = Vector3(0.0, 0.0, 0.0)
+
+            fun verticalFovFor(quadrant: CameraFocusQuadrant?) =
+                if (quadrant == null) VERTICAL_FOV_DEGREES else FOCUSED_VERTICAL_FOV_DEGREES
+
+            fun targetXFor(quadrant: CameraFocusQuadrant?) =
+                quadrant?.horizontalSign?.times(CAMERA_FOCUS_TARGET_OFFSET) ?: 0.0
+
+            fun targetYFor(quadrant: CameraFocusQuadrant?) =
+                quadrant?.verticalSign?.times(CAMERA_FOCUS_TARGET_OFFSET) ?: 0.0
+
+            fun lerp(start: Double, end: Double, progress: Double) =
+                start + (end - start) * progress
 
             fun createVertexBufferData(mesh: SphereMeshData): ByteBuffer =
                 ByteBuffer.allocateDirect(mesh.vertices.size * Float.SIZE_BYTES)

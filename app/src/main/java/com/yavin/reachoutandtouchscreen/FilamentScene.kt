@@ -10,6 +10,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
@@ -120,6 +121,21 @@ internal fun FilamentScene(
             modifier = Modifier
                 .fillMaxSize()
                 .onSizeChanged { touchAreaSize.value = it }
+                .pointerInput(renderer) {
+                    detectTapGestures(
+                        onDoubleTap = { position ->
+                            val size = touchAreaSize.value
+                            renderer.onDoubleTap(
+                                TouchInput(
+                                    x = position.x.toDouble(),
+                                    y = position.y.toDouble(),
+                                    touchAreaWidth = size.width,
+                                    touchAreaHeight = size.height,
+                                ),
+                            )
+                        },
+                    )
+                }
                 .pointerInput(renderer) {
                     awaitEachGesture {
                         var controllerId: Long? = null

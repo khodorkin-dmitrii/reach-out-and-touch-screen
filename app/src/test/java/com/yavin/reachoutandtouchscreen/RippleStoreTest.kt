@@ -282,12 +282,14 @@ class RippleStoreTest {
         val sceneSnapshot = RippleSnapshot(
             entries = rippleSnapshot.entries,
             sphereAngleRadians = 1.25,
+            cameraFocusQuadrant = CameraFocusQuadrant.BOTTOM_RIGHT,
         )
         val restored = RippleStore(capacity = 1, lifetimeNanos = 100L)
 
         restored.restore(sceneSnapshot, nowNanos = 30L)
 
         assertEquals(1.25, sceneSnapshot.sphereAngleRadians, TOLERANCE)
+        assertEquals(CameraFocusQuadrant.BOTTOM_RIGHT, sceneSnapshot.cameraFocusQuadrant)
         assertSlot(restored, 0, ORIGIN_C, 10L)
     }
 
