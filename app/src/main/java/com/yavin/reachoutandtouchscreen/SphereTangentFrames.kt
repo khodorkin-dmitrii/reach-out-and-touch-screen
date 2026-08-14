@@ -6,11 +6,6 @@ import kotlin.math.cos
 import kotlin.math.sin
 import kotlin.math.sqrt
 
-internal data class SphereTangentFrameData(
-    val normals: FloatArray,
-    val tangentQuaternions: FloatArray,
-)
-
 /** Reconstructs a smooth UV-compatible frame from the complete displaced latitude/longitude grid. */
 internal object SphereTangentFrames {
     fun generate(
@@ -18,13 +13,16 @@ internal object SphereTangentFrames {
         indices: ShortArray,
         rings: Int,
         sectors: Int,
-    ): SphereTangentFrameData {
+        normals: FloatArray,
+        tangentQuaternions: FloatArray,
+    ) {
         val vertexCount = (rings + 1) * (sectors + 1)
         require(rings >= 2 && sectors >= 3)
         require(positions.size == vertexCount * POSITION_COMPONENTS)
         require(indices.size == rings * sectors * INDICES_PER_QUAD)
+        require(normals.size == positions.size)
+        require(tangentQuaternions.size == vertexCount * TANGENT_COMPONENTS)
 
-        val normals = FloatArray(positions.size)
         val firstScratch = FloatArray(POSITION_COMPONENTS)
         val secondScratch = FloatArray(POSITION_COMPONENTS)
         for (ring in 1 until rings) {
@@ -78,7 +76,6 @@ internal object SphereTangentFrames {
             writeVector(normals, vertexIndex(rings, sector, sectors), northNormal)
         }
 
-        val tangentQuaternions = FloatArray(vertexCount * TANGENT_COMPONENTS)
         val tangentCandidate = FloatArray(POSITION_COMPONENTS)
         val tangent = FloatArray(POSITION_COMPONENTS)
         for (ring in 0..rings) {
@@ -125,8 +122,6 @@ internal object SphereTangentFrames {
                 )
             }
         }
-
-        return SphereTangentFrameData(normals, tangentQuaternions)
     }
 
     private fun poleNormal(

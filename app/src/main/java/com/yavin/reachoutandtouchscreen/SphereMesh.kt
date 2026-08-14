@@ -105,7 +105,6 @@ object SphereMesh {
         destination: FloatArray,
         destinationOffset: Int,
     ) {
-        require(destinationOffset >= 0 && destinationOffset + TANGENT_FRAME_COMPONENTS <= destination.size)
         val m00 = tangentX
         val m01 = bitangentX
         val m02 = normalX

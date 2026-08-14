@@ -12,8 +12,9 @@ class SphereTangentFramesTest {
         val rings = 12
         val sectors = 24
         val mesh = SphereMesh.create(radius = 1f, rings = rings, sectors = sectors)
-        val positions = SphereDentState.fromMesh(mesh).displacedPositions()
-        val frames = SphereTangentFrames.generate(positions, mesh.indices, rings, sectors)
+        val positions = FloatArray(mesh.vertexCount * 3)
+        SphereDentState.fromMesh(mesh).writeDisplacedPositions(positions)
+        val frames = generateFrames(positions, mesh, rings, sectors)
 
         for (vertexIndex in 0 until mesh.vertexCount) {
             assertNormalizedFinite(frames.normals, vertexIndex * 3, 3)
@@ -61,8 +62,9 @@ class SphereTangentFramesTest {
         val mesh = SphereMesh.create(radius = 1f, rings = rings, sectors = sectors)
         val dentState = SphereDentState.fromMesh(mesh)
         dentState.applyDent(hitX = 0f, hitY = 0f, hitZ = 1f)
-        val positions = dentState.displacedPositions()
-        val frames = SphereTangentFrames.generate(positions, mesh.indices, rings, sectors)
+        val positions = FloatArray(mesh.vertexCount * 3)
+        dentState.writeDisplacedPositions(positions)
+        val frames = generateFrames(positions, mesh, rings, sectors)
 
         for (vertexIndex in 0 until mesh.vertexCount) {
             assertNormalizedFinite(frames.normals, vertexIndex * 3, 3)
@@ -85,6 +87,30 @@ class SphereTangentFramesTest {
         }
         assertEquals(1f, sqrt(lengthSquared), 0.0001f)
     }
+
+    private fun generateFrames(
+        positions: FloatArray,
+        mesh: SphereMeshData,
+        rings: Int,
+        sectors: Int,
+    ): Frames {
+        val normals = FloatArray(mesh.vertexCount * 3)
+        val tangentQuaternions = FloatArray(mesh.vertexCount * 4)
+        SphereTangentFrames.generate(
+            positions = positions,
+            indices = mesh.indices,
+            rings = rings,
+            sectors = sectors,
+            normals = normals,
+            tangentQuaternions = tangentQuaternions,
+        )
+        return Frames(normals, tangentQuaternions)
+    }
+
+    private data class Frames(
+        val normals: FloatArray,
+        val tangentQuaternions: FloatArray,
+    )
 
     private fun assertVectorsEqual(values: FloatArray, firstOffset: Int, secondOffset: Int) {
         repeat(3) { assertEquals(values[firstOffset + it], values[secondOffset + it], 0.000_001f) }

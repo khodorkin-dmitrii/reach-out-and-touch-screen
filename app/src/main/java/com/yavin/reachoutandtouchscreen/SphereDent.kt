@@ -3,8 +3,9 @@ package com.yavin.reachoutandtouchscreen
 import kotlin.math.sqrt
 
 internal const val DENT_ANGULAR_RADIUS_RADIANS = 0.12f
-internal const val DENT_COMPRESSION_PER_TOUCH = 0.018f
-internal const val MAX_DENT_DEPTH = 0.06f
+internal const val DENT_COMPRESSION_PER_TOUCH = 0.030f
+internal const val MAX_DENT_DEPTH = 0.080f
+private val MINIMUM_DENT_DOT = kotlin.math.cos(DENT_ANGULAR_RADIUS_RADIANS)
 
 internal enum class SphereMeshDensity(val rings: Int, val sectors: Int) {
     BASELINE(rings = 24, sectors = 48),
@@ -52,8 +53,6 @@ internal class SphereDentState(
         val centerX = hitX / hitLength
         val centerY = hitY / hitLength
         val centerZ = hitZ / hitLength
-        val minimumDot = kotlin.math.cos(DENT_ANGULAR_RADIUS_RADIANS)
-
         for (vertexIndex in 0 until vertexCount) {
             val offset = vertexIndex * COMPONENTS_PER_POSITION
             val dot = (
@@ -61,7 +60,7 @@ internal class SphereDentState(
                     baseUnitDirections[offset + 1] * centerY +
                     baseUnitDirections[offset + 2] * centerZ
                 ).coerceIn(-1f, 1f)
-            if (dot <= minimumDot) continue
+            if (dot <= MINIMUM_DENT_DOT) continue
 
             val angularDistance = kotlin.math.acos(dot)
             val normalizedDistance = angularDistance / DENT_ANGULAR_RADIUS_RADIANS
@@ -71,8 +70,8 @@ internal class SphereDentState(
         }
     }
 
-    fun displacedPositions(): FloatArray {
-        val positions = FloatArray(baseUnitDirections.size)
+    fun writeDisplacedPositions(positions: FloatArray) {
+        require(positions.size == baseUnitDirections.size)
         for (vertexIndex in 0 until vertexCount) {
             val radius = 1f - depthAt(vertexIndex)
             val offset = vertexIndex * COMPONENTS_PER_POSITION
@@ -80,7 +79,6 @@ internal class SphereDentState(
             positions[offset + 1] = baseUnitDirections[offset + 1] * radius
             positions[offset + 2] = baseUnitDirections[offset + 2] * radius
         }
-        return positions
     }
 
     fun depthAt(vertexIndex: Int): Float {

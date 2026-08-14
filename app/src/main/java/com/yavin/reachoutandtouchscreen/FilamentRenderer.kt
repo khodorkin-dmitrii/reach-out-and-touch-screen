@@ -6,6 +6,7 @@ import android.graphics.BitmapFactory
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.Looper
+import android.util.Log
 import android.view.Choreographer
 import android.view.Surface
 import androidx.annotation.MainThread
@@ -28,8 +29,7 @@ import com.google.android.filament.Viewport
 import com.google.android.filament.android.TextureHelper
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
-import java.util.Collections
-import java.util.IdentityHashMap
+import java.nio.FloatBuffer
 import java.util.concurrent.CountDownLatch
 import kotlin.math.PI
 import kotlin.math.abs
@@ -88,10 +88,10 @@ internal class FilamentRenderer(
     fun onPointerDown(
         touch: TouchInput,
         controlsRotation: Boolean,
-        createsRipple: Boolean,
+        createsTouchReaction: Boolean,
         eventTimeNanos: Long,
     ) {
-        post { onPointerDown(touch, controlsRotation, createsRipple, eventTimeNanos) }
+        post { onPointerDown(touch, controlsRotation, createsTouchReaction, eventTimeNanos) }
     }
 
     fun setMoonTextureBlend(blend: Float) {
@@ -193,7 +193,15 @@ internal class FilamentRenderer(
             mesh = meshData,
             restoredAccumulatedCompression = initialRippleSnapshot.copyAccumulatedDentCompression(),
         )
-        private val initialDynamicVertexData = createDynamicVertexBufferData()
+        private val uploadHandler = Handler(checkNotNull(Looper.myLooper()))
+        private val displacedPositions = FloatArray(meshData.vertexCount * POSITION_COMPONENTS)
+        private val geometricNormals = FloatArray(meshData.vertexCount * POSITION_COMPONENTS)
+        private val tangentQuaternions = FloatArray(meshData.vertexCount * TANGENT_COMPONENTS)
+        private val dynamicUploadSlots = Array(DYNAMIC_UPLOAD_SLOT_COUNT) {
+            DynamicUploadSlot(meshData.vertexCount)
+        }
+        private val dentRebuildState = DentRebuildState(DYNAMIC_UPLOAD_SLOT_COUNT)
+        private val dentRebuildRunnable = Runnable { runScheduledDentRebuild() }
         private val uvVertexData = createUvVertexBufferData(meshData)
         private val indexData = createIndexBufferData(meshData)
         private val vertexBuffer = createVertexBuffer()
@@ -204,10 +212,6 @@ internal class FilamentRenderer(
             .build(engine)
         private val materialInstance = material.createInstance()
         private val choreographer = Choreographer.getInstance()
-        private val uploadHandler = Handler(checkNotNull(Looper.myLooper()))
-        private val pendingVertexUploads = Collections.newSetFromMap(
-            IdentityHashMap<ByteBuffer, Boolean>(),
-        )
         private val textureSampler = TextureSampler(
             TextureSampler.MinFilter.LINEAR_MIPMAP_LINEAR,
             TextureSampler.MagFilter.LINEAR,
@@ -272,6 +276,7 @@ internal class FilamentRenderer(
         private var fpsSampleStartNanos = 0L
         private var renderedFramesInSample = 0
         private var lastPublishedFps = 0
+        private var pendingLogicalDentNanos = 0L
 
         init {
             renderer.clearOptions = Renderer.ClearOptions().apply {
@@ -316,6 +321,12 @@ internal class FilamentRenderer(
                 MAX_ACTIVE_RIPPLES,
             )
             materialInstance.setParameter("rippleClock", 0f)
+
+            rebuildDynamicGeometry()
+            val initialSlotIndex = dentRebuildState.reserveInitialUploadSlot()
+            dynamicUploadSlots[initialSlotIndex].write(displacedPositions, tangentQuaternions)
+            dentRebuildState.markInitialUploadSubmitted(initialSlotIndex)
+            submitDynamicUpload(initialSlotIndex)
 
             if (rippleStore.hasActive(initialRippleTimeNanos)) {
                 uploadRippleParameters(initialRippleTimeNanos)
@@ -399,38 +410,45 @@ internal class FilamentRenderer(
         fun onPointerDown(
             touch: TouchInput,
             controlsRotation: Boolean,
-            createsRipple: Boolean,
+            createsTouchReaction: Boolean,
             eventTimeNanos: Long,
         ) {
+            val logicalDentStartNanos = if (DENT_REBUILD_TIMING_ENABLED) System.nanoTime() else 0L
             if (!canRender()) return
             val localHit = localSphereHit(touch) ?: return
             val hitDirection = localHit.normalized() ?: return
+            val successfulHitNanos = timingSince(logicalDentStartNanos)
+            val nowNanos = System.nanoTime()
+            val pointerDownTimeNanos = eventTimeNanos.takeIf { it in 1..nowNanos } ?: nowNanos
             markSphereInteraction()
             if (controlsRotation) {
                 angularVelocityRadiansPerSecond = 0.0
                 lastRotationFrameTimeNanos = 0L
-                rotationDragActive = false
-            }
-            dentState.applyDent(
-                hitX = hitDirection.x.toFloat(),
-                hitY = hitDirection.y.toFloat(),
-                hitZ = hitDirection.z.toFloat(),
-            )
-            uploadDentGeometry()
-            if (createsRipple) {
-                val nowNanos = System.nanoTime()
-                rippleStore.add(hitDirection, nowNanos)
-                uploadRippleParameters(nowNanos)
-                updateRippleClock(nowNanos)
-                rippleClockNeedsUpdate = true
-            }
-
-            if (controlsRotation) {
                 rotationDragActive = true
                 grabbedLocalLongitudeRadians = longitudeRadians(localHit, rotationAxisFrame)
                 lastControllerX = touch.x
                 usingRotationFallback = false
                 angularVelocityTracker.reset(sphereAngleRadians, eventTimeNanos)
+            }
+            if (!createsTouchReaction) return
+
+            rippleStore.add(hitDirection, pointerDownTimeNanos)
+            uploadRippleParameters(nowNanos)
+            updateRippleClock(nowNanos)
+            rippleClockNeedsUpdate = true
+
+            val dentAccumulationStartNanos = timingNow()
+            dentState.applyDent(
+                hitX = hitDirection.x.toFloat(),
+                hitY = hitDirection.y.toFloat(),
+                hitZ = hitDirection.z.toFloat(),
+            )
+            if (DENT_REBUILD_TIMING_ENABLED) {
+                pendingLogicalDentNanos +=
+                    successfulHitNanos + timingSince(dentAccumulationStartNanos)
+            }
+            if (dentRebuildState.onDentUpdated()) {
+                uploadHandler.post(dentRebuildRunnable)
             }
         }
 
@@ -541,6 +559,8 @@ internal class FilamentRenderer(
             if (destroyed) return
             destroyed = true
             stopFrameLoop()
+            uploadHandler.removeCallbacks(dentRebuildRunnable)
+            dentRebuildState.cancelPendingTask()
             destroySwapChain()
             surface = null
             engine.flushAndWait()
@@ -591,19 +611,84 @@ internal class FilamentRenderer(
             )
             .build(engine)
             .also {
-                it.setBufferAt(engine, POSITION_BUFFER_INDEX, initialDynamicVertexData.positions)
-                it.setBufferAt(engine, TANGENT_BUFFER_INDEX, initialDynamicVertexData.tangents)
                 it.setBufferAt(engine, UV_BUFFER_INDEX, uvVertexData)
             }
 
-        private fun uploadDentGeometry() {
-            val upload = createDynamicVertexBufferData()
-            uploadDynamicVertexBuffer(POSITION_BUFFER_INDEX, upload.positions)
-            uploadDynamicVertexBuffer(TANGENT_BUFFER_INDEX, upload.tangents)
+        private fun runScheduledDentRebuild() {
+            if (destroyed) return
+            val request = dentRebuildState.beginPendingRebuild() ?: return
+            val totalStartNanos = timingNow()
+            val logicalDentNanos = pendingLogicalDentNanos
+            pendingLogicalDentNanos = 0L
+
+            val positionsStartNanos = timingNow()
+            dentState.writeDisplacedPositions(displacedPositions)
+            val positionsNanos = timingSince(positionsStartNanos)
+
+            val tangentFramesStartNanos = timingNow()
+            SphereTangentFrames.generate(
+                positions = displacedPositions,
+                indices = meshData.indices,
+                rings = meshDensity.rings,
+                sectors = meshDensity.sectors,
+                normals = geometricNormals,
+                tangentQuaternions = tangentQuaternions,
+            )
+            val tangentFramesNanos = timingSince(tangentFramesStartNanos)
+
+            val copyStartNanos = timingNow()
+            dynamicUploadSlots[request.slotIndex].write(displacedPositions, tangentQuaternions)
+            val copyNanos = timingSince(copyStartNanos)
+
+            val needsFollowUp = dentRebuildState.markSubmitted(request)
+            val submissionStartNanos = timingNow()
+            submitDynamicUpload(request.slotIndex)
+            val submissionNanos = timingSince(submissionStartNanos)
+            val totalNanos = timingSince(totalStartNanos)
+
+            if (DENT_REBUILD_TIMING_ENABLED) {
+                Log.d(
+                    TAG,
+                    "dent authoritative=${dentRebuildState.authoritativeVersion} " +
+                        "rebuilt=${request.version} " +
+                        "submitted=${dentRebuildState.submittedVersion} " +
+                        "coalesced=${request.coalescedDentUpdates} " +
+                        "waitedForSlot=${request.waitedForFreeSlot} " +
+                        "inFlight=${dentRebuildState.inFlightSlotCount()} " +
+                        "hitAndLogicalMs=${logicalDentNanos.toMilliseconds()} " +
+                        "positionsMs=${positionsNanos.toMilliseconds()} " +
+                        "tangentFramesMs=${tangentFramesNanos.toMilliseconds()} " +
+                        "copyMs=${copyNanos.toMilliseconds()} " +
+                        "setBufferAtCpuMs=${submissionNanos.toMilliseconds()} " +
+                        "totalMs=${totalNanos.toMilliseconds()} gpuAsync=not-measured",
+                )
+            }
+            if (needsFollowUp) uploadHandler.post(dentRebuildRunnable)
         }
 
-        private fun uploadDynamicVertexBuffer(bufferIndex: Int, upload: ByteBuffer) {
-            pendingVertexUploads += upload
+        private fun rebuildDynamicGeometry() {
+            dentState.writeDisplacedPositions(displacedPositions)
+            SphereTangentFrames.generate(
+                positions = displacedPositions,
+                indices = meshData.indices,
+                rings = meshDensity.rings,
+                sectors = meshDensity.sectors,
+                normals = geometricNormals,
+                tangentQuaternions = tangentQuaternions,
+            )
+        }
+
+        private fun submitDynamicUpload(slotIndex: Int) {
+            val slot = dynamicUploadSlots[slotIndex]
+            submitDynamicUploadPart(POSITION_BUFFER_INDEX, slot.positions, slotIndex)
+            submitDynamicUploadPart(TANGENT_BUFFER_INDEX, slot.tangents, slotIndex)
+        }
+
+        private fun submitDynamicUploadPart(
+            bufferIndex: Int,
+            upload: ByteBuffer,
+            slotIndex: Int,
+        ) {
             vertexBuffer.setBufferAt(
                 engine,
                 bufferIndex,
@@ -611,8 +696,15 @@ internal class FilamentRenderer(
                 0,
                 upload.remaining(),
                 uploadHandler,
-                Runnable { pendingVertexUploads -= upload },
+                Runnable { onDynamicUploadPartCompleted(slotIndex) },
             )
+        }
+
+        private fun onDynamicUploadPartCompleted(slotIndex: Int) {
+            if (destroyed) return
+            if (dentRebuildState.onUploadPartCompleted(slotIndex)) {
+                uploadHandler.post(dentRebuildRunnable)
+            }
         }
 
         private fun createIndexBuffer() = IndexBuffer.Builder()
@@ -905,6 +997,14 @@ internal class FilamentRenderer(
         private fun canRender() =
             !destroyed && resumed && swapChain != null && width > 0 && height > 0
 
+        private fun timingNow(): Long =
+            if (DENT_REBUILD_TIMING_ENABLED) System.nanoTime() else 0L
+
+        private fun timingSince(startNanos: Long): Long =
+            if (DENT_REBUILD_TIMING_ENABLED) System.nanoTime() - startNanos else 0L
+
+        private fun Long.toMilliseconds(): Double = this / 1_000_000.0
+
         private fun readAsset(path: String): ByteBuffer {
             val bytes = assets.open(path).use { it.readBytes() }
             return ByteBuffer.allocateDirect(bytes.size)
@@ -956,6 +1056,9 @@ internal class FilamentRenderer(
         }
 
         private companion object {
+            const val TAG = "FilamentRenderer"
+            const val DENT_REBUILD_TIMING_ENABLED = false
+            const val DYNAMIC_UPLOAD_SLOT_COUNT = 2
             const val POSITION_BUFFER_INDEX = 0
             const val TANGENT_BUFFER_INDEX = 1
             const val UV_BUFFER_INDEX = 2
@@ -1030,24 +1133,31 @@ internal class FilamentRenderer(
                     }
         }
 
-        private fun createDynamicVertexBufferData(): DynamicVertexBufferData {
-            val positions = dentState.displacedPositions()
-            val tangentFrames = SphereTangentFrames.generate(
-                positions = positions,
-                indices = meshData.indices,
-                rings = meshDensity.rings,
-                sectors = meshDensity.sectors,
-            )
-            return DynamicVertexBufferData(
-                positions = createFloatVertexBufferData(positions),
-                tangents = createFloatVertexBufferData(tangentFrames.tangentQuaternions),
-            )
-        }
+        private class DynamicUploadSlot(vertexCount: Int) {
+            val positions: ByteBuffer = allocateFloatBuffer(vertexCount * POSITION_COMPONENTS)
+            val tangents: ByteBuffer = allocateFloatBuffer(vertexCount * TANGENT_COMPONENTS)
+            private val positionFloats: FloatBuffer = positions.asFloatBuffer()
+            private val tangentFloats: FloatBuffer = tangents.asFloatBuffer()
 
-        private data class DynamicVertexBufferData(
-            val positions: ByteBuffer,
-            val tangents: ByteBuffer,
-        )
+            fun write(positionValues: FloatArray, tangentValues: FloatArray) {
+                require(positionValues.size == positionFloats.capacity())
+                require(tangentValues.size == tangentFloats.capacity())
+                positionFloats.clear()
+                positionFloats.put(positionValues)
+                tangentFloats.clear()
+                tangentFloats.put(tangentValues)
+                positions.position(0)
+                positions.limit(positions.capacity())
+                tangents.position(0)
+                tangents.limit(tangents.capacity())
+            }
+
+            private companion object {
+                fun allocateFloatBuffer(componentCount: Int): ByteBuffer =
+                    ByteBuffer.allocateDirect(componentCount * Float.SIZE_BYTES)
+                        .order(ByteOrder.nativeOrder())
+            }
+        }
     }
 }
 

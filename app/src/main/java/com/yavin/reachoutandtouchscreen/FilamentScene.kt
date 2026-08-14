@@ -65,7 +65,7 @@ internal fun FilamentScene(
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     var fps by remember { mutableIntStateOf(0) }
-    var rippleEffectsEnabled by rememberSaveable { mutableStateOf(true) }
+    var touchReactionEnabled by rememberSaveable { mutableStateOf(true) }
     var moonTextureEnabled by rememberSaveable { mutableStateOf(true) }
     var idleRotationEnabled by rememberSaveable { mutableStateOf(true) }
     var controlsVisible by remember { mutableStateOf(true) }
@@ -79,7 +79,7 @@ internal fun FilamentScene(
         )
     }
     val touchAreaSize = remember { mutableStateOf(IntSize.Zero) }
-    val currentRippleEffectsEnabled by rememberUpdatedState(rippleEffectsEnabled)
+    val currentTouchReactionEnabled by rememberUpdatedState(touchReactionEnabled)
     val moonTextureBlend by animateFloatAsState(
         targetValue = if (moonTextureEnabled) 1f else 0f,
         animationSpec = tween(durationMillis = MOON_TEXTURE_TRANSITION_MILLIS),
@@ -167,7 +167,7 @@ internal fun FilamentScene(
                                             renderer.onPointerDown(
                                                 touch = touch,
                                                 controlsRotation = controlsRotation,
-                                                createsRipple = currentRippleEffectsEnabled,
+                                                createsTouchReaction = currentTouchReactionEnabled,
                                                 eventTimeNanos = change.uptimeMillis * NANOS_PER_MILLISECOND,
                                             )
                                         }
@@ -220,12 +220,12 @@ internal fun FilamentScene(
         FilamentSceneOverlay(
             fps = fps,
             controlsVisible = controlsVisible,
-            rippleEffectsEnabled = rippleEffectsEnabled,
+            touchReactionEnabled = touchReactionEnabled,
             moonTextureEnabled = moonTextureEnabled,
             idleRotationEnabled = idleRotationEnabled,
             onShowControls = ::showControls,
-            onRippleEffectsChanged = {
-                rippleEffectsEnabled = it
+            onTouchReactionChanged = {
+                touchReactionEnabled = it
                 showControls()
             },
             onMoonTextureChanged = {
@@ -244,11 +244,11 @@ internal fun FilamentScene(
 private fun BoxScope.FilamentSceneOverlay(
     fps: Int,
     controlsVisible: Boolean,
-    rippleEffectsEnabled: Boolean,
+    touchReactionEnabled: Boolean,
     moonTextureEnabled: Boolean,
     idleRotationEnabled: Boolean,
     onShowControls: () -> Unit,
-    onRippleEffectsChanged: (Boolean) -> Unit,
+    onTouchReactionChanged: (Boolean) -> Unit,
     onMoonTextureChanged: (Boolean) -> Unit,
     onIdleRotationChanged: (Boolean) -> Unit,
 ) {
@@ -265,11 +265,11 @@ private fun BoxScope.FilamentSceneOverlay(
 
     SceneControls(
         visible = controlsVisible,
-        rippleEffectsEnabled = rippleEffectsEnabled,
+        touchReactionEnabled = touchReactionEnabled,
         moonTextureEnabled = moonTextureEnabled,
         idleRotationEnabled = idleRotationEnabled,
         onShow = onShowControls,
-        onRippleEffectsChanged = onRippleEffectsChanged,
+        onTouchReactionChanged = onTouchReactionChanged,
         onMoonTextureChanged = onMoonTextureChanged,
         onIdleRotationChanged = onIdleRotationChanged,
         modifier = Modifier
@@ -282,11 +282,11 @@ private fun BoxScope.FilamentSceneOverlay(
 @Composable
 private fun SceneControls(
     visible: Boolean,
-    rippleEffectsEnabled: Boolean,
+    touchReactionEnabled: Boolean,
     moonTextureEnabled: Boolean,
     idleRotationEnabled: Boolean,
     onShow: () -> Unit,
-    onRippleEffectsChanged: (Boolean) -> Unit,
+    onTouchReactionChanged: (Boolean) -> Unit,
     onMoonTextureChanged: (Boolean) -> Unit,
     onIdleRotationChanged: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
@@ -313,9 +313,9 @@ private fun SceneControls(
             ) {
                 Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) {
                     ToggleRow(
-                        label = stringResource(R.string.ripple_effects),
-                        checked = rippleEffectsEnabled,
-                        onCheckedChange = onRippleEffectsChanged,
+                        label = stringResource(R.string.touch_reaction),
+                        checked = touchReactionEnabled,
+                        onCheckedChange = onTouchReactionChanged,
                     )
                     ToggleRow(
                         label = stringResource(R.string.moon_texture),
@@ -367,11 +367,11 @@ private fun FilamentScenePreview() {
             FilamentSceneOverlay(
                 fps = 60,
                 controlsVisible = true,
-                rippleEffectsEnabled = true,
+                touchReactionEnabled = true,
                 moonTextureEnabled = false,
                 idleRotationEnabled = true,
                 onShowControls = {},
-                onRippleEffectsChanged = {},
+                onTouchReactionChanged = {},
                 onMoonTextureChanged = {},
                 onIdleRotationChanged = {},
             )

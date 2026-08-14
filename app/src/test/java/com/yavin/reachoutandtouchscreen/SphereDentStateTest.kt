@@ -16,7 +16,10 @@ class SphereDentStateTest {
 
         state.applyDent(hitX = 1f, hitY = 0f, hitZ = 0f)
 
-        assertTrue(state.depthAt(0) > 0f)
+        val expectedCenterDepth =
+            MAX_DENT_DEPTH * DENT_COMPRESSION_PER_TOUCH /
+                (MAX_DENT_DEPTH + DENT_COMPRESSION_PER_TOUCH)
+        assertEquals(expectedCenterDepth, state.depthAt(0), 0.000_001f)
         assertEquals(0f, state.depthAt(1), 0f)
     }
 
@@ -31,5 +34,6 @@ class SphereDentStateTest {
 
         assertTrue(repeatedDepth > firstDepth)
         assertTrue(repeatedDepth < MAX_DENT_DEPTH)
+        assertTrue(MAX_DENT_DEPTH - repeatedDepth < 0.003f)
     }
 }
