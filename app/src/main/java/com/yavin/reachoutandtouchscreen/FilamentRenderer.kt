@@ -28,6 +28,8 @@ import com.google.android.filament.Viewport
 import com.google.android.filament.android.TextureHelper
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.util.Collections
+import java.util.IdentityHashMap
 import java.util.concurrent.CountDownLatch
 import kotlin.math.PI
 import kotlin.math.abs
@@ -181,12 +183,18 @@ internal class FilamentRenderer(
         private val camera = engine.createCamera(cameraEntity)
         private val sphereEntity = entityManager.create()
         private val lightEntity = entityManager.create()
+        private val meshDensity = ACTIVE_SPHERE_MESH_DENSITY
         private val meshData = SphereMesh.create(
             radius = 1f,
-            rings = SPHERE_RINGS,
-            sectors = SPHERE_SECTORS,
+            rings = meshDensity.rings,
+            sectors = meshDensity.sectors,
         )
-        private val vertexData = createVertexBufferData(meshData)
+        private val dentState = SphereDentState.fromMesh(
+            mesh = meshData,
+            restoredAccumulatedCompression = initialRippleSnapshot.copyAccumulatedDentCompression(),
+        )
+        private val initialDynamicVertexData = createDynamicVertexBufferData()
+        private val uvVertexData = createUvVertexBufferData(meshData)
         private val indexData = createIndexBufferData(meshData)
         private val vertexBuffer = createVertexBuffer()
         private val indexBuffer = createIndexBuffer()
@@ -197,6 +205,9 @@ internal class FilamentRenderer(
         private val materialInstance = material.createInstance()
         private val choreographer = Choreographer.getInstance()
         private val uploadHandler = Handler(checkNotNull(Looper.myLooper()))
+        private val pendingVertexUploads = Collections.newSetFromMap(
+            IdentityHashMap<ByteBuffer, Boolean>(),
+        )
         private val textureSampler = TextureSampler(
             TextureSampler.MinFilter.LINEAR_MIPMAP_LINEAR,
             TextureSampler.MagFilter.LINEAR,
@@ -393,16 +404,22 @@ internal class FilamentRenderer(
         ) {
             if (!canRender()) return
             val localHit = localSphereHit(touch) ?: return
+            val hitDirection = localHit.normalized() ?: return
             markSphereInteraction()
             if (controlsRotation) {
                 angularVelocityRadiansPerSecond = 0.0
                 lastRotationFrameTimeNanos = 0L
                 rotationDragActive = false
             }
+            dentState.applyDent(
+                hitX = hitDirection.x.toFloat(),
+                hitY = hitDirection.y.toFloat(),
+                hitZ = hitDirection.z.toFloat(),
+            )
+            uploadDentGeometry()
             if (createsRipple) {
-                val rippleDirection = localHit.normalized() ?: return
                 val nowNanos = System.nanoTime()
-                rippleStore.add(rippleDirection, nowNanos)
+                rippleStore.add(hitDirection, nowNanos)
                 uploadRippleParameters(nowNanos)
                 updateRippleClock(nowNanos)
                 rippleClockNeedsUpdate = true
@@ -516,6 +533,7 @@ internal class FilamentRenderer(
                 entries = rippleSnapshot.entries,
                 sphereAngleRadians = sphereAngleRadians,
                 cameraFocusQuadrant = cameraFocusQuadrant,
+                accumulatedDentCompression = dentState.snapshotAccumulatedCompression(),
             )
         }
 
@@ -549,30 +567,53 @@ internal class FilamentRenderer(
 
         private fun createVertexBuffer() = VertexBuffer.Builder()
             .vertexCount(meshData.vertexCount)
-            .bufferCount(1)
+            .bufferCount(3)
             .attribute(
                 VertexBuffer.VertexAttribute.POSITION,
                 0,
                 VertexBuffer.AttributeType.FLOAT3,
                 0,
-                VERTEX_SIZE_BYTES,
+                POSITION_VERTEX_SIZE_BYTES,
             )
             .attribute(
                 VertexBuffer.VertexAttribute.TANGENTS,
-                0,
+                TANGENT_BUFFER_INDEX,
                 VertexBuffer.AttributeType.FLOAT4,
-                SphereMeshData.TANGENT_OFFSET * Float.SIZE_BYTES,
-                VERTEX_SIZE_BYTES,
+                0,
+                TANGENT_VERTEX_SIZE_BYTES,
             )
             .attribute(
                 VertexBuffer.VertexAttribute.UV0,
-                0,
+                UV_BUFFER_INDEX,
                 VertexBuffer.AttributeType.FLOAT2,
-                SphereMeshData.UV_OFFSET * Float.SIZE_BYTES,
-                VERTEX_SIZE_BYTES,
+                0,
+                UV_VERTEX_SIZE_BYTES,
             )
             .build(engine)
-            .also { it.setBufferAt(engine, 0, vertexData) }
+            .also {
+                it.setBufferAt(engine, POSITION_BUFFER_INDEX, initialDynamicVertexData.positions)
+                it.setBufferAt(engine, TANGENT_BUFFER_INDEX, initialDynamicVertexData.tangents)
+                it.setBufferAt(engine, UV_BUFFER_INDEX, uvVertexData)
+            }
+
+        private fun uploadDentGeometry() {
+            val upload = createDynamicVertexBufferData()
+            uploadDynamicVertexBuffer(POSITION_BUFFER_INDEX, upload.positions)
+            uploadDynamicVertexBuffer(TANGENT_BUFFER_INDEX, upload.tangents)
+        }
+
+        private fun uploadDynamicVertexBuffer(bufferIndex: Int, upload: ByteBuffer) {
+            pendingVertexUploads += upload
+            vertexBuffer.setBufferAt(
+                engine,
+                bufferIndex,
+                upload,
+                0,
+                upload.remaining(),
+                uploadHandler,
+                Runnable { pendingVertexUploads -= upload },
+            )
+        }
 
         private fun createIndexBuffer() = IndexBuffer.Builder()
             .indexCount(meshData.indices.size)
@@ -915,9 +956,15 @@ internal class FilamentRenderer(
         }
 
         private companion object {
-            const val SPHERE_RINGS = 24
-            const val SPHERE_SECTORS = 48
-            const val VERTEX_SIZE_BYTES = SphereMeshData.FLOATS_PER_VERTEX * Float.SIZE_BYTES
+            const val POSITION_BUFFER_INDEX = 0
+            const val TANGENT_BUFFER_INDEX = 1
+            const val UV_BUFFER_INDEX = 2
+            const val POSITION_COMPONENTS = 3
+            const val TANGENT_COMPONENTS = 4
+            const val UV_COMPONENTS = 2
+            const val POSITION_VERTEX_SIZE_BYTES = POSITION_COMPONENTS * Float.SIZE_BYTES
+            const val TANGENT_VERTEX_SIZE_BYTES = TANGENT_COMPONENTS * Float.SIZE_BYTES
+            const val UV_VERTEX_SIZE_BYTES = UV_COMPONENTS * Float.SIZE_BYTES
             const val MATERIAL_ASSET = "materials/sphere.filamat"
             const val LUNAR_TEXTURE_WIDTH = 2048
             const val LUNAR_TEXTURE_HEIGHT = 1024
@@ -952,14 +999,26 @@ internal class FilamentRenderer(
             fun lerp(start: Double, end: Double, progress: Double) =
                 start + (end - start) * progress
 
-            fun createVertexBufferData(mesh: SphereMeshData): ByteBuffer =
-                ByteBuffer.allocateDirect(mesh.vertices.size * Float.SIZE_BYTES)
+            fun createFloatVertexBufferData(values: FloatArray): ByteBuffer =
+                ByteBuffer.allocateDirect(values.size * Float.SIZE_BYTES)
                     .order(ByteOrder.nativeOrder())
                     .apply {
-                        asFloatBuffer().put(mesh.vertices)
+                        asFloatBuffer().put(values)
                         limit(capacity())
                         position(0)
                     }
+
+            fun createUvVertexBufferData(mesh: SphereMeshData): ByteBuffer {
+                val uvs = FloatArray(mesh.vertexCount * UV_COMPONENTS)
+                for (vertexIndex in 0 until mesh.vertexCount) {
+                    val sourceOffset = vertexIndex * SphereMeshData.FLOATS_PER_VERTEX +
+                        SphereMeshData.UV_OFFSET
+                    val destinationOffset = vertexIndex * UV_COMPONENTS
+                    uvs[destinationOffset] = mesh.vertices[sourceOffset]
+                    uvs[destinationOffset + 1] = mesh.vertices[sourceOffset + 1]
+                }
+                return createFloatVertexBufferData(uvs)
+            }
 
             fun createIndexBufferData(mesh: SphereMeshData): ByteBuffer =
                 ByteBuffer.allocateDirect(mesh.indices.size * Short.SIZE_BYTES)
@@ -970,6 +1029,25 @@ internal class FilamentRenderer(
                         position(0)
                     }
         }
+
+        private fun createDynamicVertexBufferData(): DynamicVertexBufferData {
+            val positions = dentState.displacedPositions()
+            val tangentFrames = SphereTangentFrames.generate(
+                positions = positions,
+                indices = meshData.indices,
+                rings = meshDensity.rings,
+                sectors = meshDensity.sectors,
+            )
+            return DynamicVertexBufferData(
+                positions = createFloatVertexBufferData(positions),
+                tangents = createFloatVertexBufferData(tangentFrames.tangentQuaternions),
+            )
+        }
+
+        private data class DynamicVertexBufferData(
+            val positions: ByteBuffer,
+            val tangents: ByteBuffer,
+        )
     }
 }
 

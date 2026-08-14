@@ -15,14 +15,19 @@ internal class RippleSnapshot(
     entries: List<RippleSnapshotEntry>,
     val sphereAngleRadians: Double = 0.0,
     val cameraFocusQuadrant: CameraFocusQuadrant? = null,
+    accumulatedDentCompression: FloatArray = FloatArray(0),
 ) {
     val entries: List<RippleSnapshotEntry> = Collections.unmodifiableList(entries.toList())
+    private val accumulatedDentCompression = accumulatedDentCompression.copyOf()
+
+    fun copyAccumulatedDentCompression(): FloatArray = accumulatedDentCompression.copyOf()
 
     companion object {
         val Empty = RippleSnapshot(
             entries = emptyList(),
             sphereAngleRadians = 0.0,
             cameraFocusQuadrant = null,
+            accumulatedDentCompression = FloatArray(0),
         )
     }
 }

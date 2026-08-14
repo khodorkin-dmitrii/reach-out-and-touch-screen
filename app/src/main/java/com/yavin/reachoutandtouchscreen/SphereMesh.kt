@@ -59,13 +59,14 @@ object SphereMesh {
                 val bitangentX = y * tangentZ
                 val bitangentY = z * tangentX - x * tangentZ
                 val bitangentZ = -y * tangentX
-                val tangentFrame = tangentFrameQuaternion(
+                writeTangentFrameQuaternion(
                     tangentX, 0f, tangentZ,
                     bitangentX, bitangentY, bitangentZ,
                     x, y, z,
+                    destination = vertices,
+                    destinationOffset = vertexOffset,
                 )
-                tangentFrame.copyInto(vertices, vertexOffset)
-                vertexOffset += tangentFrame.size
+                vertexOffset += TANGENT_FRAME_COMPONENTS
                 vertices[vertexOffset++] = u.toFloat()
                 vertices[vertexOffset++] = v.toFloat()
             }
@@ -91,7 +92,7 @@ object SphereMesh {
         return SphereMeshData(vertices, indices)
     }
 
-    private fun tangentFrameQuaternion(
+    internal fun writeTangentFrameQuaternion(
         tangentX: Float,
         tangentY: Float,
         tangentZ: Float,
@@ -101,7 +102,10 @@ object SphereMesh {
         normalX: Float,
         normalY: Float,
         normalZ: Float,
-    ): FloatArray {
+        destination: FloatArray,
+        destinationOffset: Int,
+    ) {
+        require(destinationOffset >= 0 && destinationOffset + TANGENT_FRAME_COMPONENTS <= destination.size)
         val m00 = tangentX
         val m01 = bitangentX
         val m02 = normalX
@@ -113,56 +117,69 @@ object SphereMesh {
         val m22 = normalZ
         val trace = m00 + m11 + m22
 
-        val quaternion = when {
+        var quaternionX: Float
+        var quaternionY: Float
+        var quaternionZ: Float
+        var quaternionW: Float
+        when {
             trace > 0f -> {
                 val scale = 2f * sqrt(trace + 1f)
-                floatArrayOf(
-                    (m21 - m12) / scale,
-                    (m02 - m20) / scale,
-                    (m10 - m01) / scale,
-                    scale / 4f,
-                )
+                quaternionX = (m21 - m12) / scale
+                quaternionY = (m02 - m20) / scale
+                quaternionZ = (m10 - m01) / scale
+                quaternionW = scale / 4f
             }
             m00 > m11 && m00 > m22 -> {
                 val scale = 2f * sqrt(1f + m00 - m11 - m22)
-                floatArrayOf(
-                    scale / 4f,
-                    (m01 + m10) / scale,
-                    (m02 + m20) / scale,
-                    (m21 - m12) / scale,
-                )
+                quaternionX = scale / 4f
+                quaternionY = (m01 + m10) / scale
+                quaternionZ = (m02 + m20) / scale
+                quaternionW = (m21 - m12) / scale
             }
             m11 > m22 -> {
                 val scale = 2f * sqrt(1f + m11 - m00 - m22)
-                floatArrayOf(
-                    (m01 + m10) / scale,
-                    scale / 4f,
-                    (m12 + m21) / scale,
-                    (m02 - m20) / scale,
-                )
+                quaternionX = (m01 + m10) / scale
+                quaternionY = scale / 4f
+                quaternionZ = (m12 + m21) / scale
+                quaternionW = (m02 - m20) / scale
             }
             else -> {
                 val scale = 2f * sqrt(1f + m22 - m00 - m11)
-                floatArrayOf(
-                    (m02 + m20) / scale,
-                    (m12 + m21) / scale,
-                    scale / 4f,
-                    (m10 - m01) / scale,
-                )
+                quaternionX = (m02 + m20) / scale
+                quaternionY = (m12 + m21) / scale
+                quaternionZ = scale / 4f
+                quaternionW = (m10 - m01) / scale
             }
         }
 
-        val length = sqrt(quaternion.sumOf { (it * it).toDouble() }).toFloat()
-        return quaternion.apply {
-            for (index in indices) this[index] /= length
-            if (this[3] < 0f) for (index in indices) this[index] = -this[index]
-            if (this[3] < TANGENT_FRAME_W_BIAS) {
-                this[3] = TANGENT_FRAME_W_BIAS
-                val xyzScale = sqrt(1f - TANGENT_FRAME_W_BIAS * TANGENT_FRAME_W_BIAS)
-                for (index in 0..2) this[index] *= xyzScale
-            }
+        val inverseLength = 1f / sqrt(
+            quaternionX * quaternionX + quaternionY * quaternionY +
+                quaternionZ * quaternionZ + quaternionW * quaternionW,
+        )
+        quaternionX *= inverseLength
+        quaternionY *= inverseLength
+        quaternionZ *= inverseLength
+        quaternionW *= inverseLength
+        if (quaternionW < 0f) {
+            quaternionX = -quaternionX
+            quaternionY = -quaternionY
+            quaternionZ = -quaternionZ
+            quaternionW = -quaternionW
         }
+        if (quaternionW < TANGENT_FRAME_W_BIAS) {
+            quaternionW = TANGENT_FRAME_W_BIAS
+            val xyzScale = sqrt(1f - TANGENT_FRAME_W_BIAS * TANGENT_FRAME_W_BIAS)
+            quaternionX *= xyzScale
+            quaternionY *= xyzScale
+            quaternionZ *= xyzScale
+        }
+
+        destination[destinationOffset] = quaternionX
+        destination[destinationOffset + 1] = quaternionY
+        destination[destinationOffset + 2] = quaternionZ
+        destination[destinationOffset + 3] = quaternionW
     }
 
+    private const val TANGENT_FRAME_COMPONENTS = 4
     private const val TANGENT_FRAME_W_BIAS = 1f / Int.MAX_VALUE
 }

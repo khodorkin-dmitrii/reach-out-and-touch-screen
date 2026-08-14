@@ -9,8 +9,8 @@ import kotlin.math.sqrt
 class SphereMeshTest {
     @Test
     fun createsExpectedBoundedMesh() {
-        val rings = 24
-        val sectors = 48
+        val rings = ACTIVE_SPHERE_MESH_DENSITY.rings
+        val sectors = ACTIVE_SPHERE_MESH_DENSITY.sectors
 
         val mesh = SphereMesh.create(radius = 1f, rings = rings, sectors = sectors)
 
