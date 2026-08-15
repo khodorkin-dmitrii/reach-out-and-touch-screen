@@ -19,12 +19,13 @@ interactive Android 3D ripple playground
       <p>The project is intentionally compact: one clear interaction, developed through small and independently verifiable rendering milestones.</p>
       <h2>✨ Current functionality</h2>
       <ul>
-        <li>Real-time Filament scene with a procedurally generated PBR sphere, camera, and directional light</li>
+        <li>Real-time Filament scene with a procedurally generated PBR sphere, camera, and interactive SUN directional light</li>
         <li>NASA-derived stylized lunar surface with restrained cool/warm color grading and normal-mapped terrain detail</li>
         <li>Touch coordinates converted into a world-space ray and a hit point on the sphere</li>
         <li>Up to 10 concurrent active ripple effects created by pointer-down events</li>
         <li>Bounded ripple storage with expiry, slot reuse, and deterministic oldest-first replacement</li>
         <li>The first pointer controls true 3D arcball rotation after hitting the Moon, handing off to bounded damped inertia on release or when the drag first leaves the projected trackball. Every successful pointer down can still create one ripple, and additional pointers do not affect rotation.</li>
+        <li>The light can be rotated independently in world space, with its distant source represented by Filament's built-in skybox solar disk pending physical-device visual verification.</li>
         <li>Signed Ricker-wavelet profile with constructive and destructive linear interference</li>
         <li>Distinct crest and trough responses through color, roughness, and emissive material properties</li>
         <li>Compose FPS overlay for lightweight runtime diagnostics</li>

@@ -21,10 +21,12 @@ import com.google.android.filament.Material
 import com.google.android.filament.MaterialInstance.FloatElement
 import com.google.android.filament.RenderableManager
 import com.google.android.filament.Renderer
+import com.google.android.filament.Skybox
 import com.google.android.filament.SwapChain
 import com.google.android.filament.Texture
 import com.google.android.filament.TextureSampler
 import com.google.android.filament.VertexBuffer
+import com.google.android.filament.View
 import com.google.android.filament.Viewport
 import com.google.android.filament.android.TextureHelper
 import java.nio.ByteBuffer
@@ -184,6 +186,10 @@ internal class FilamentRenderer(
         private val engine = Engine.create()
         private val renderer = engine.createRenderer()
         private val scene = engine.createScene()
+        private val skybox = Skybox.Builder()
+            .color(BACKGROUND_RED, BACKGROUND_GREEN, BACKGROUND_BLUE, BACKGROUND_ALPHA)
+            .showSun(true)
+            .build(engine)
         private val view = engine.createView()
         private val entityManager = EntityManager.get()
         private val cameraEntity = entityManager.create()
@@ -294,11 +300,18 @@ internal class FilamentRenderer(
         init {
             renderer.clearOptions = Renderer.ClearOptions().apply {
                 clear = true
-                clearColor = doubleArrayOf(0.018, 0.025, 0.045, 1.0)
+                clearColor = doubleArrayOf(
+                    BACKGROUND_RED.toDouble(),
+                    BACKGROUND_GREEN.toDouble(),
+                    BACKGROUND_BLUE.toDouble(),
+                    BACKGROUND_ALPHA.toDouble(),
+                )
             }
 
+            scene.skybox = skybox
             view.scene = scene
             view.camera = camera
+            view.dithering = View.Dithering.TEMPORAL
             camera.setExposure(16f, 1f / 125f, 100f)
 
             materialInstance.setParameter(
@@ -363,7 +376,7 @@ internal class FilamentRenderer(
             applySphereTransform()
 
             val filamentLightDirection = filamentDirectionForSource(lightSourceDirection)
-            LightManager.Builder(LightManager.Type.DIRECTIONAL)
+            LightManager.Builder(LightManager.Type.SUN)
                 .color(1f, 0.94f, 0.86f)
                 .intensity(95_000f)
                 .direction(
@@ -371,6 +384,9 @@ internal class FilamentRenderer(
                     filamentLightDirection.y.toFloat(),
                     filamentLightDirection.z.toFloat(),
                 )
+                .sunAngularRadius(SUN_ANGULAR_RADIUS_DEGREES)
+                .sunHaloSize(SUN_HALO_SIZE)
+                .sunHaloFalloff(SUN_HALO_FALLOFF)
                 .castShadows(false)
                 .build(engine, lightEntity)
 
@@ -629,8 +645,10 @@ internal class FilamentRenderer(
 
             scene.removeEntity(sphereEntity)
             scene.removeEntity(lightEntity)
+            scene.skybox = null
             engine.destroyEntity(sphereEntity)
             engine.destroyEntity(lightEntity)
+            engine.destroySkybox(skybox)
             engine.destroyMaterialInstance(materialInstance)
             engine.destroyTexture(baseColorTexture)
             engine.destroyTexture(normalTexture)
@@ -1165,6 +1183,13 @@ internal class FilamentRenderer(
             const val UV_VERTEX_SIZE_BYTES = UV_COMPONENTS * Float.SIZE_BYTES
             const val MATERIAL_ASSET = "materials/sphere.filamat"
             const val LIGHT_DIRECTION_TO_SOURCE_PARAMETER = "lightDirectionToSource"
+            const val BACKGROUND_RED = 0.018f
+            const val BACKGROUND_GREEN = 0.025f
+            const val BACKGROUND_BLUE = 0.045f
+            const val BACKGROUND_ALPHA = 1.0f
+            const val SUN_ANGULAR_RADIUS_DEGREES = 0.545f
+            const val SUN_HALO_SIZE = 25.0f
+            const val SUN_HALO_FALLOFF = 5.0f
             const val LUNAR_TEXTURE_WIDTH = 2048
             const val LUNAR_TEXTURE_HEIGHT = 1024
             const val VERTICAL_FOV_DEGREES = 45.0
