@@ -95,7 +95,8 @@ Active ripples retain their logical age, position, and slot identity when an ori
 - [x] Add true simultaneous multitouch support
 - [x] Add a NASA-derived stylized lunar base-color and normal-mapped surface
 - [x] Add surface-anchored single-axis touch rotation with inertia
-- [ ] Prototype GPU vertex displacement and evaluate sphere mesh density
+- [x] Prototype GPU vertex displacement and evaluate sphere mesh density
+- [ ] Trackball rotation
 - [ ] Add a minimal interactive lighting experiment
 - [ ] Run repeatable validation and performance checks on a physical Android device
 
