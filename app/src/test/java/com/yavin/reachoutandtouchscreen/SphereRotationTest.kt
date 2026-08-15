@@ -2,6 +2,7 @@ package com.yavin.reachoutandtouchscreen
 
 import kotlin.math.sqrt
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -17,6 +18,9 @@ class SphereRotationTest {
         assertNormalizedFinite(outside)
         assertTrue(inside.z > 0.0)
         assertEquals(0.0, outside.z, TOLERANCE)
+        assertTrue(projection.contains(112.0, 64.0))
+        assertTrue(projection.contains(140.0, 80.0))
+        assertFalse(projection.contains(220.0, -40.0))
     }
 
     @Test

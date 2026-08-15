@@ -146,7 +146,21 @@ internal data class ArcballProjection(
     val centerX: Double,
     val centerY: Double,
     val radius: Double,
-)
+) {
+    fun contains(pointerX: Double, pointerY: Double): Boolean {
+        if (
+            !pointerX.isFinite() || !pointerY.isFinite() ||
+            !centerX.isFinite() || !centerY.isFinite() ||
+            !radius.isFinite() || radius <= 0.0
+        ) {
+            return false
+        }
+        return hypot(
+            (pointerX - centerX) / radius,
+            (pointerY - centerY) / radius,
+        ) <= 1.0
+    }
+}
 
 internal data class ArcballGesture(
     val startVectorView: Vector3,

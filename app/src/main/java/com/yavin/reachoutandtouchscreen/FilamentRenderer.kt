@@ -257,6 +257,7 @@ internal class FilamentRenderer(
         private var lastSphereInteractionNanos = initialRippleTimeNanos
         private var lastRotationFrameTimeNanos = 0L
         private var arcballGesture: ArcballGesture? = null
+        private var arcballPointerInside = false
         private val orientationVelocityTracker = RecentOrientationVelocityTracker(
             capacity = ORIENTATION_SAMPLE_CAPACITY,
             windowNanos = ORIENTATION_SAMPLE_WINDOW_NANOS,
@@ -420,6 +421,7 @@ internal class FilamentRenderer(
                 inertiaSpeedRadiansPerSecond = 0.0
                 lastRotationFrameTimeNanos = 0L
                 arcballGesture = createArcballGesture(touch)
+                arcballPointerInside = arcballGesture?.projection?.contains(touch.x, touch.y) == true
                 orientationVelocityTracker.clear()
                 if (arcballGesture != null) {
                     orientationVelocityTracker.reset(sphereOrientation, eventTimeNanos)
@@ -478,30 +480,28 @@ internal class FilamentRenderer(
         }
 
         fun onRotationMove(touch: TouchInput, eventTimeNanos: Long) {
-            if (arcballGesture == null || !canRender()) return
+            val gesture = arcballGesture ?: return
+            if (!canRender()) return
             markSphereInteraction()
+            val wasInside = arcballPointerInside
+            val isInside = gesture.projection.contains(touch.x, touch.y)
             updateRotationDrag(touch, eventTimeNanos)
+            arcballPointerInside = isInside
+            if (wasInside && !isInside) finishArcballGesture(eventTimeNanos)
         }
 
         fun onRotationEnd(touch: TouchInput, eventTimeNanos: Long) {
             if (arcballGesture == null) return
             markSphereInteraction()
             if (canRender()) updateRotationDrag(touch, eventTimeNanos)
-            val launchVelocity = orientationVelocityTracker.estimate(eventTimeNanos)
-            if (launchVelocity != null) {
-                inertiaWorldAxis = launchVelocity.axis
-                inertiaSpeedRadiansPerSecond = launchVelocity.speedRadiansPerSecond
-            } else {
-                inertiaSpeedRadiansPerSecond = 0.0
-            }
-            arcballGesture = null
-            orientationVelocityTracker.clear()
-            lastRotationFrameTimeNanos = 0L
+            finishArcballGesture(eventTimeNanos)
         }
 
         fun onRotationCancel() {
-            if (arcballGesture != null) markSphereInteraction()
+            if (arcballGesture == null) return
+            markSphereInteraction()
             arcballGesture = null
+            arcballPointerInside = false
             orientationVelocityTracker.clear()
             inertiaSpeedRadiansPerSecond = 0.0
             lastRotationFrameTimeNanos = 0L
@@ -857,6 +857,21 @@ internal class FilamentRenderer(
                     ),
                 )
             }
+        }
+
+        private fun finishArcballGesture(releaseTimeNanos: Long) {
+            if (arcballGesture == null) return
+            val launchVelocity = orientationVelocityTracker.estimate(releaseTimeNanos)
+            if (launchVelocity != null) {
+                inertiaWorldAxis = launchVelocity.axis
+                inertiaSpeedRadiansPerSecond = launchVelocity.speedRadiansPerSecond
+            } else {
+                inertiaSpeedRadiansPerSecond = 0.0
+            }
+            arcballGesture = null
+            arcballPointerInside = false
+            orientationVelocityTracker.clear()
+            lastRotationFrameTimeNanos = 0L
         }
 
         private fun markSphereInteraction() {
