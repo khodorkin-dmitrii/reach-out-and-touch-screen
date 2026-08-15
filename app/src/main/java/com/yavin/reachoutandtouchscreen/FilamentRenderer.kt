@@ -312,6 +312,12 @@ internal class FilamentRenderer(
             view.scene = scene
             view.camera = camera
             view.dithering = View.Dithering.TEMPORAL
+            view.bloomOptions = View.BloomOptions().apply {
+                enabled = true
+                strength = BLOOM_STRENGTH
+                lensFlare = true
+                starburst = true
+            }
             camera.setExposure(16f, 1f / 125f, 100f)
 
             materialInstance.setParameter(
@@ -1190,6 +1196,7 @@ internal class FilamentRenderer(
             const val SUN_ANGULAR_RADIUS_DEGREES = 0.545f
             const val SUN_HALO_SIZE = 25.0f
             const val SUN_HALO_FALLOFF = 5.0f
+            const val BLOOM_STRENGTH = 0.10f
             const val LUNAR_TEXTURE_WIDTH = 2048
             const val LUNAR_TEXTURE_HEIGHT = 1024
             const val VERTICAL_FOV_DEGREES = 45.0
