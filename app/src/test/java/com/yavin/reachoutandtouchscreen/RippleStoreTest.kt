@@ -275,20 +275,21 @@ class RippleStoreTest {
     }
 
     @Test
-    fun sceneSnapshotPreservesRotationAndLocalRippleOrigin() {
+    fun sceneSnapshotPreservesOrientationAndLocalRippleOrigin() {
         val original = RippleStore(capacity = 1, lifetimeNanos = 100L)
         original.add(ORIGIN_C, startTimeNanos = 10L)
         val rippleSnapshot = original.snapshot(nowNanos = 20L)
+        val orientation = Quaternion.fromAxisAngle(Vector3(1.0, 1.0, 0.0), 1.25)
         val sceneSnapshot = RippleSnapshot(
             entries = rippleSnapshot.entries,
-            sphereAngleRadians = 1.25,
+            sphereOrientation = orientation,
             cameraFocusQuadrant = CameraFocusQuadrant.BOTTOM_RIGHT,
         )
         val restored = RippleStore(capacity = 1, lifetimeNanos = 100L)
 
         restored.restore(sceneSnapshot, nowNanos = 30L)
 
-        assertEquals(1.25, sceneSnapshot.sphereAngleRadians, TOLERANCE)
+        assertEquals(orientation, sceneSnapshot.sphereOrientation)
         assertEquals(CameraFocusQuadrant.BOTTOM_RIGHT, sceneSnapshot.cameraFocusQuadrant)
         assertSlot(restored, 0, ORIGIN_C, 10L)
     }

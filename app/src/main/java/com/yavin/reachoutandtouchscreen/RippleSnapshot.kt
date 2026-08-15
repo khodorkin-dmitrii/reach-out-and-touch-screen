@@ -13,7 +13,7 @@ internal data class RippleSnapshotEntry(
 /** Immutable logical scene state transferred between renderer instances. */
 internal class RippleSnapshot(
     entries: List<RippleSnapshotEntry>,
-    val sphereAngleRadians: Double = 0.0,
+    val sphereOrientation: Quaternion = Quaternion.Identity,
     val cameraFocusQuadrant: CameraFocusQuadrant? = null,
     accumulatedDentCompression: FloatArray = FloatArray(0),
 ) {
@@ -25,7 +25,7 @@ internal class RippleSnapshot(
     companion object {
         val Empty = RippleSnapshot(
             entries = emptyList(),
-            sphereAngleRadians = 0.0,
+            sphereOrientation = Quaternion.Identity,
             cameraFocusQuadrant = null,
             accumulatedDentCompression = FloatArray(0),
         )

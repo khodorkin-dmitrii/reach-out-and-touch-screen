@@ -24,7 +24,7 @@ interactive Android 3D ripple playground
         <li>Touch coordinates converted into a world-space ray and a hit point on the sphere</li>
         <li>Up to 10 concurrent active ripple effects created by pointer-down events</li>
         <li>Bounded ripple storage with expiry, slot reuse, and deterministic oldest-first replacement</li>
-        <li>The first pointer controls surface-anchored single-axis rotation with bounded inertia, while every pointer down still creates one ripple and additional pointers do not affect rotation.</li>
+        <li>The first pointer controls true 3D arcball rotation after hitting the Moon, with bounded damped inertia around the gesture's recent world-space release axis. Every successful pointer down can still create one ripple, and additional pointers do not affect rotation.</li>
         <li>Signed Ricker-wavelet profile with constructive and destructive linear interference</li>
         <li>Distinct crest and trough responses through color, roughness, and emissive material properties</li>
         <li>Compose FPS overlay for lightweight runtime diagnostics</li>

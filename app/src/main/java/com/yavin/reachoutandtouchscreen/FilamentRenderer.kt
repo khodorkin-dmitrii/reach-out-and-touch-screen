@@ -31,11 +31,6 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.FloatBuffer
 import java.util.concurrent.CountDownLatch
-import kotlin.math.PI
-import kotlin.math.abs
-import kotlin.math.cos
-import kotlin.math.sin
-import kotlin.math.tan
 
 /**
  * Main-thread facade around a single-thread-owned Filament scene.
@@ -256,22 +251,22 @@ internal class FilamentRenderer(
         private var cameraAnimationEndTargetX = cameraTargetX
         private var cameraAnimationEndTargetY = cameraTargetY
         private val sphereTransform = FloatArray(16)
-        private val rotationAxisFrame = SphereRotationConfiguration.axisFrame
-        private var sphereAngleRadians = initialRippleSnapshot.sphereAngleRadians
-            .takeIf { it.isFinite() }
-            ?.let(::wrapRadians)
-            ?: 0.0
-        private var angularVelocityRadiansPerSecond = 0.0
+        private var sphereOrientation = initialRippleSnapshot.sphereOrientation
+            .normalizedOrIdentity()
         private var idleRotationEnabled = initialIdleRotationEnabled
         private var lastSphereInteractionNanos = initialRippleTimeNanos
         private var lastRotationFrameTimeNanos = 0L
-        private var rotationDragActive = false
-        private var grabbedLocalLongitudeRadians = 0.0
-        private var lastControllerX = 0.0
-        private var usingRotationFallback = false
-        private val angularVelocityTracker = RecentAngularVelocityTracker(
-            windowNanos = ROTATION_VELOCITY_WINDOW_NANOS,
+        private var arcballGesture: ArcballGesture? = null
+        private val orientationVelocityTracker = RecentOrientationVelocityTracker(
+            capacity = ORIENTATION_SAMPLE_CAPACITY,
+            windowNanos = ORIENTATION_SAMPLE_WINDOW_NANOS,
+            staleReleaseNanos = STALE_RELEASE_NANOS,
+            minimumIntervalNanos = MINIMUM_SAMPLE_INTERVAL_NANOS,
+            minimumSpeedRadiansPerSecond = MINIMUM_INERTIA_LAUNCH_SPEED,
+            maximumSpeedRadiansPerSecond = MAXIMUM_INERTIA_LAUNCH_SPEED,
         )
+        private var inertiaWorldAxis = Vector3(0.0, 1.0, 0.0)
+        private var inertiaSpeedRadiansPerSecond = 0.0
         private var rippleParametersNeedUpload = false
         private var fpsSampleStartNanos = 0L
         private var renderedFramesInSample = 0
@@ -422,13 +417,13 @@ internal class FilamentRenderer(
             val pointerDownTimeNanos = eventTimeNanos.takeIf { it in 1..nowNanos } ?: nowNanos
             markSphereInteraction()
             if (controlsRotation) {
-                angularVelocityRadiansPerSecond = 0.0
+                inertiaSpeedRadiansPerSecond = 0.0
                 lastRotationFrameTimeNanos = 0L
-                rotationDragActive = true
-                grabbedLocalLongitudeRadians = longitudeRadians(localHit, rotationAxisFrame)
-                lastControllerX = touch.x
-                usingRotationFallback = false
-                angularVelocityTracker.reset(sphereAngleRadians, eventTimeNanos)
+                arcballGesture = createArcballGesture(touch)
+                orientationVelocityTracker.clear()
+                if (arcballGesture != null) {
+                    orientationVelocityTracker.reset(sphereOrientation, eventTimeNanos)
+                }
             }
             if (!createsTouchReaction) return
 
@@ -483,27 +478,32 @@ internal class FilamentRenderer(
         }
 
         fun onRotationMove(touch: TouchInput, eventTimeNanos: Long) {
-            if (!rotationDragActive || !canRender()) return
+            if (arcballGesture == null || !canRender()) return
             markSphereInteraction()
             updateRotationDrag(touch, eventTimeNanos)
         }
 
         fun onRotationEnd(touch: TouchInput, eventTimeNanos: Long) {
-            if (!rotationDragActive) return
+            if (arcballGesture == null) return
             markSphereInteraction()
             if (canRender()) updateRotationDrag(touch, eventTimeNanos)
-            angularVelocityRadiansPerSecond = angularVelocityTracker
-                .velocityRadiansPerSecond(eventTimeNanos)
-                .coerceIn(-MAX_ANGULAR_VELOCITY, MAX_ANGULAR_VELOCITY)
-                .takeUnless { abs(it) < STOP_ANGULAR_VELOCITY } ?: 0.0
-            rotationDragActive = false
+            val launchVelocity = orientationVelocityTracker.estimate(eventTimeNanos)
+            if (launchVelocity != null) {
+                inertiaWorldAxis = launchVelocity.axis
+                inertiaSpeedRadiansPerSecond = launchVelocity.speedRadiansPerSecond
+            } else {
+                inertiaSpeedRadiansPerSecond = 0.0
+            }
+            arcballGesture = null
+            orientationVelocityTracker.clear()
             lastRotationFrameTimeNanos = 0L
         }
 
         fun onRotationCancel() {
-            if (rotationDragActive) markSphereInteraction()
-            rotationDragActive = false
-            angularVelocityRadiansPerSecond = 0.0
+            if (arcballGesture != null) markSphereInteraction()
+            arcballGesture = null
+            orientationVelocityTracker.clear()
+            inertiaSpeedRadiansPerSecond = 0.0
             lastRotationFrameTimeNanos = 0L
         }
 
@@ -517,11 +517,7 @@ internal class FilamentRenderer(
                 projectionMatrix = projectionMatrix,
                 viewMatrix = viewMatrix,
             ) ?: return null
-            val localRay = inverseRotateRayAroundAxis(
-                ray = worldRay,
-                unitAxis = rotationAxisFrame.axis,
-                angleRadians = sphereAngleRadians,
-            )
+            val localRay = inverseRotateRay(worldRay, sphereOrientation)
             return RaySphereIntersection.nearestHit(
                 ray = localRay,
                 sphereCenter = SPHERE_CENTER,
@@ -549,7 +545,7 @@ internal class FilamentRenderer(
             val rippleSnapshot = rippleStore.snapshot(nowNanos)
             return RippleSnapshot(
                 entries = rippleSnapshot.entries,
-                sphereAngleRadians = sphereAngleRadians,
+                sphereOrientation = sphereOrientation,
                 cameraFocusQuadrant = cameraFocusQuadrant,
                 accumulatedDentCompression = dentState.snapshotAccumulatedCompression(),
             )
@@ -722,37 +718,39 @@ internal class FilamentRenderer(
             resetFpsSampling()
         }
 
+        private fun createArcballGesture(touch: TouchInput): ArcballGesture? {
+            camera.getProjectionMatrix(projectionMatrix)
+            camera.getViewMatrix(viewMatrix)
+            val cameraBasis = CameraBasis.fromViewMatrix(viewMatrix) ?: return null
+            val arcballProjection = arcballProjectionForSphere(
+                sphereCenter = SPHERE_CENTER,
+                sphereRadius = SPHERE_RADIUS,
+                cameraBasis = cameraBasis,
+                projectionMatrix = projectionMatrix,
+                viewMatrix = viewMatrix,
+                touchAreaWidth = touch.touchAreaWidth,
+                touchAreaHeight = touch.touchAreaHeight,
+            ) ?: return null
+            val startVector = mapPointerToArcball(
+                pointerX = touch.x,
+                pointerY = touch.y,
+                projection = arcballProjection,
+            ) ?: return null
+            // Freeze camera/projection reference data so focus animation cannot bend one drag.
+            return ArcballGesture(
+                startVectorView = startVector,
+                startOrientation = sphereOrientation,
+                cameraBasis = cameraBasis,
+                projection = arcballProjection,
+            )
+        }
+
         private fun updateRotationDrag(touch: TouchInput, eventTimeNanos: Long) {
-            val localHit = localSphereHit(touch)
-            if (localHit != null) {
-                val pointerLocalLongitude = longitudeRadians(localHit, rotationAxisFrame)
-                if (usingRotationFallback) {
-                    // Rebase at the re-entry point so switching mappings cannot introduce a jump.
-                    grabbedLocalLongitudeRadians = pointerLocalLongitude
-                    usingRotationFallback = false
-                } else {
-                    setSphereAngle(
-                        anchoredAxisRotation(
-                            currentAngleRadians = sphereAngleRadians,
-                            grabbedLocalLongitudeRadians = grabbedLocalLongitudeRadians,
-                            pointerLocalLongitudeRadians = pointerLocalLongitude,
-                        ),
-                    )
-                }
-            } else {
-                val projectedRadius = minOf(
-                    touch.touchAreaWidth,
-                    touch.touchAreaHeight,
-                ) / (2.0 * FRAMING_MARGIN) * cameraZoomScale() * rotationAxisFrame.axis.y
-                if (projectedRadius > 0.0) {
-                    setSphereAngle(
-                        sphereAngleRadians + (touch.x - lastControllerX) / projectedRadius,
-                    )
-                }
-                usingRotationFallback = true
+            val gesture = arcballGesture ?: return
+            val orientation = gesture.orientationAt(touch.x, touch.y) ?: return
+            if (setSphereOrientation(orientation)) {
+                orientationVelocityTracker.add(orientation, eventTimeNanos)
             }
-            lastControllerX = touch.x
-            angularVelocityTracker.add(sphereAngleRadians, eventTimeNanos)
         }
 
         private fun updateCamera(frameTimeNanos: Long) {
@@ -803,18 +801,15 @@ internal class FilamentRenderer(
             )
         }
 
-        private fun cameraZoomScale(): Double {
-            val overviewHalfFov = VERTICAL_FOV_DEGREES * PI / 360.0
-            val currentHalfFov = cameraVerticalFovDegrees * PI / 360.0
-            return tan(overviewHalfFov) / tan(currentHalfFov)
-        }
-
         private fun updateRotation(frameTimeNanos: Long) {
-            if (rotationDragActive) {
+            if (arcballGesture != null) {
                 lastRotationFrameTimeNanos = 0L
                 return
             }
-            val usesInertia = angularVelocityRadiansPerSecond != 0.0
+            val usesInertia = inertiaSpeedRadiansPerSecond >= INERTIA_STOP_SPEED
+            if (!usesInertia && inertiaSpeedRadiansPerSecond != 0.0) {
+                inertiaSpeedRadiansPerSecond = 0.0
+            }
             val usesIdleRotation = shouldUseIdleRotation(
                 enabled = idleRotationEnabled,
                 lastInteractionNanos = lastSphereInteractionNanos,
@@ -836,22 +831,31 @@ internal class FilamentRenderer(
             lastRotationFrameTimeNanos = frameTimeNanos
             if (deltaTimeSeconds == 0.0) return
 
-            setSphereAngle(
-                sphereAngleRadians + if (usesInertia) {
-                    angularVelocityRadiansPerSecond * deltaTimeSeconds
-                } else {
-                    IDLE_ROTATION_SPEED_RADIANS_PER_SECOND * deltaTimeSeconds
-                },
-            )
-            if (!usesInertia) return
-            angularVelocityRadiansPerSecond = decayedAngularVelocity(
-                angularVelocityRadiansPerSecond,
-                ROTATION_FRICTION_PER_SECOND,
-                deltaTimeSeconds,
-            )
-            if (abs(angularVelocityRadiansPerSecond) < STOP_ANGULAR_VELOCITY) {
-                angularVelocityRadiansPerSecond = 0.0
-                lastRotationFrameTimeNanos = 0L
+            if (usesInertia) {
+                setSphereOrientation(
+                    orientationAfterWorldInertia(
+                        orientation = sphereOrientation,
+                        worldAxis = inertiaWorldAxis,
+                        speedRadiansPerSecond = inertiaSpeedRadiansPerSecond,
+                        deltaTimeSeconds = deltaTimeSeconds,
+                    ),
+                )
+                inertiaSpeedRadiansPerSecond = decayedAngularSpeed(
+                    speedRadiansPerSecond = inertiaSpeedRadiansPerSecond,
+                    dampingRatePerSecond = INERTIA_DAMPING_RATE_PER_SECOND,
+                    deltaTimeSeconds = deltaTimeSeconds,
+                )
+                if (inertiaSpeedRadiansPerSecond < INERTIA_STOP_SPEED) {
+                    inertiaSpeedRadiansPerSecond = 0.0
+                    lastRotationFrameTimeNanos = 0L
+                }
+            } else {
+                setSphereOrientation(
+                    sphereOrientation * Quaternion.fromAxisAngle(
+                        LOCAL_Y_AXIS,
+                        IDLE_ROTATION_SPEED_RADIANS_PER_SECOND * deltaTimeSeconds,
+                    ),
+                )
             }
         }
 
@@ -859,32 +863,17 @@ internal class FilamentRenderer(
             lastSphereInteractionNanos = System.nanoTime()
         }
 
-        private fun setSphereAngle(angleRadians: Double) {
-            val wrappedAngle = wrapRadians(angleRadians)
-            if (wrappedAngle == sphereAngleRadians) return
-            sphereAngleRadians = wrappedAngle
+        private fun setSphereOrientation(orientation: Quaternion): Boolean {
+            val normalized = orientation.normalizedOrIdentity()
+            if (normalized == sphereOrientation) return false
+            sphereOrientation = normalized
             applySphereTransform()
             rippleParametersNeedUpload = true
+            return true
         }
 
         private fun applySphereTransform() {
-            val cosine = cos(sphereAngleRadians).toFloat()
-            val sine = sin(sphereAngleRadians).toFloat()
-            val oneMinusCosine = 1f - cosine
-            val axisX = rotationAxisFrame.axis.x.toFloat()
-            val axisY = rotationAxisFrame.axis.y.toFloat()
-            val axisZ = rotationAxisFrame.axis.z.toFloat()
-            sphereTransform.fill(0f)
-            sphereTransform[0] = cosine + axisX * axisX * oneMinusCosine
-            sphereTransform[1] = axisY * axisX * oneMinusCosine + axisZ * sine
-            sphereTransform[2] = axisZ * axisX * oneMinusCosine - axisY * sine
-            sphereTransform[4] = axisX * axisY * oneMinusCosine - axisZ * sine
-            sphereTransform[5] = cosine + axisY * axisY * oneMinusCosine
-            sphereTransform[6] = axisZ * axisY * oneMinusCosine + axisX * sine
-            sphereTransform[8] = axisX * axisZ * oneMinusCosine + axisY * sine
-            sphereTransform[9] = axisY * axisZ * oneMinusCosine - axisX * sine
-            sphereTransform[10] = cosine + axisZ * axisZ * oneMinusCosine
-            sphereTransform[15] = 1f
+            sphereOrientation.writeColumnMajorRotationMatrix(sphereTransform)
             val transformManager = engine.transformManager
             transformManager.setTransform(
                 transformManager.getInstance(sphereEntity),
@@ -893,28 +882,21 @@ internal class FilamentRenderer(
         }
 
         private fun uploadRippleParameters(nowNanos: Long) {
-            val cosine = cos(sphereAngleRadians).toFloat()
-            val sine = sin(sphereAngleRadians).toFloat()
-            val oneMinusCosine = 1f - cosine
-            val axisX = rotationAxisFrame.axis.x.toFloat()
-            val axisY = rotationAxisFrame.axis.y.toFloat()
-            val axisZ = rotationAxisFrame.axis.z.toFloat()
             for (slot in 0 until MAX_ACTIVE_RIPPLES) {
                 val parameterOffset = slot * RIPPLE_PARAMETER_COMPONENTS
                 if (rippleStore.isActive(slot, nowNanos)) {
                     val localX = rippleStore.originX(slot)
                     val localY = rippleStore.originY(slot)
                     val localZ = rippleStore.originZ(slot)
-                    val axisDotOrigin = axisX * localX + axisY * localY + axisZ * localZ
-                    rippleParameters[parameterOffset] = cosine * localX +
-                        sine * (axisY * localZ - axisZ * localY) +
-                        oneMinusCosine * axisX * axisDotOrigin
-                    rippleParameters[parameterOffset + 1] = cosine * localY +
-                        sine * (axisZ * localX - axisX * localZ) +
-                        oneMinusCosine * axisY * axisDotOrigin
-                    rippleParameters[parameterOffset + 2] = cosine * localZ +
-                        sine * (axisX * localY - axisY * localX) +
-                        oneMinusCosine * axisZ * axisDotOrigin
+                    rippleParameters[parameterOffset] =
+                        sphereTransform[0] * localX + sphereTransform[4] * localY +
+                            sphereTransform[8] * localZ
+                    rippleParameters[parameterOffset + 1] =
+                        sphereTransform[1] * localX + sphereTransform[5] * localY +
+                            sphereTransform[9] * localZ
+                    rippleParameters[parameterOffset + 2] =
+                        sphereTransform[2] * localX + sphereTransform[6] * localY +
+                            sphereTransform[10] * localZ
                     rippleParameters[parameterOffset + RIPPLE_START_COMPONENT] =
                         secondsSinceRippleEpoch(rippleStore.startTimeNanos(slot))
                 } else {
@@ -1082,13 +1064,18 @@ internal class FilamentRenderer(
             const val INACTIVE_RIPPLE_START_SECONDS = -10f
             const val NANOS_PER_SECOND = 1_000_000_000L
             const val FPS_SAMPLE_INTERVAL_NANOS = 1_000_000_000L
-            const val ROTATION_VELOCITY_WINDOW_NANOS = 120_000_000L
-            const val ROTATION_FRICTION_PER_SECOND = 4.5
+            const val ORIENTATION_SAMPLE_CAPACITY = 12
+            const val ORIENTATION_SAMPLE_WINDOW_NANOS = 100_000_000L
+            const val STALE_RELEASE_NANOS = 120_000_000L
+            const val MINIMUM_SAMPLE_INTERVAL_NANOS = 16_000_000L
+            const val MINIMUM_INERTIA_LAUNCH_SPEED = 0.35
+            const val MAXIMUM_INERTIA_LAUNCH_SPEED = 6.0
+            const val INERTIA_DAMPING_RATE_PER_SECOND = 3.5
+            const val INERTIA_STOP_SPEED = 0.03
             const val IDLE_ROTATION_SPEED_RADIANS_PER_SECOND = 0.15
-            const val MAX_ANGULAR_VELOCITY = 8.0
-            const val STOP_ANGULAR_VELOCITY = 0.025
             const val MAX_ROTATION_DELTA_TIME_SECONDS = 0.05
             val SPHERE_CENTER = Vector3(0.0, 0.0, 0.0)
+            val LOCAL_Y_AXIS = Vector3(0.0, 1.0, 0.0)
 
             fun verticalFovFor(quadrant: CameraFocusQuadrant?) =
                 if (quadrant == null) VERTICAL_FOV_DEGREES else FOCUSED_VERTICAL_FOV_DEGREES
