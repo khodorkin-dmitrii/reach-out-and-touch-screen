@@ -322,6 +322,7 @@ internal class FilamentRenderer(
                 textureSampler,
             )
             materialInstance.setParameter("moonTextureBlend", 1f)
+            setMaterialLightDirection()
             for (slot in 0 until MAX_ACTIVE_RIPPLES) {
                 rippleParameters[slot * RIPPLE_PARAMETER_COMPONENTS + RIPPLE_START_COMPONENT] =
                     INACTIVE_RIPPLE_START_SECONDS
@@ -936,6 +937,7 @@ internal class FilamentRenderer(
             )
             if (sourceDirection == lightSourceDirection) return
             lightSourceDirection = sourceDirection
+            setMaterialLightDirection()
             val filamentDirection = filamentDirectionForSource(sourceDirection)
             val lightManager = engine.lightManager
             lightManager.setDirection(
@@ -943,6 +945,15 @@ internal class FilamentRenderer(
                 filamentDirection.x.toFloat(),
                 filamentDirection.y.toFloat(),
                 filamentDirection.z.toFloat(),
+            )
+        }
+
+        private fun setMaterialLightDirection() {
+            materialInstance.setParameter(
+                LIGHT_DIRECTION_TO_SOURCE_PARAMETER,
+                lightSourceDirection.x.toFloat(),
+                lightSourceDirection.y.toFloat(),
+                lightSourceDirection.z.toFloat(),
             )
         }
 
@@ -1153,6 +1164,7 @@ internal class FilamentRenderer(
             const val TANGENT_VERTEX_SIZE_BYTES = TANGENT_COMPONENTS * Float.SIZE_BYTES
             const val UV_VERTEX_SIZE_BYTES = UV_COMPONENTS * Float.SIZE_BYTES
             const val MATERIAL_ASSET = "materials/sphere.filamat"
+            const val LIGHT_DIRECTION_TO_SOURCE_PARAMETER = "lightDirectionToSource"
             const val LUNAR_TEXTURE_WIDTH = 2048
             const val LUNAR_TEXTURE_HEIGHT = 1024
             const val VERTICAL_FOV_DEGREES = 45.0

@@ -21,7 +21,7 @@ class MaterialContractTest {
     }
 
     @Test
-    fun lunarTextureParametersMatchKotlinContract() {
+    fun lunarTextureAndTerminatorParametersMatchKotlinContract() {
         val source = File("src/main/materials/sphere.mat").readText()
 
         assertTrue(source.contains("flipUV : false"))
@@ -35,7 +35,11 @@ class MaterialContractTest {
         assertEquals(Texture.InternalFormat.RGBA8, internalFormatFor(TextureColorSpace.LINEAR))
         assertTrue(source.contains("name : moonTextureBlend"))
         assertTrue(source.contains("materialParams.moonTextureBlend"))
-        assertTrue(source.contains("mix(vec3(0.0, 0.0, 1.0), tangentNormal, moonBlend)"))
+        assertTrue(source.contains("name : lightDirectionToSource"))
+        assertTrue(source.contains("getWorldGeometricNormalVector()"))
+        assertTrue(source.contains("materialParams.lightDirectionToSource"))
+        assertTrue(source.contains("const float TERMINATOR_FADE_WIDTH = 0.15"))
+        assertTrue(source.contains("material.normal = normalize(mix("))
     }
 
     @Test
