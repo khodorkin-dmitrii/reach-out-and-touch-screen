@@ -257,15 +257,16 @@ internal class FilamentRenderer(
         private val projectionMatrix = DoubleArray(16)
         private val viewMatrix = DoubleArray(16)
         private var overviewCameraDistance = 0.0
+        private var cameraProjection: CameraFraming.ProjectionPolicy? = null
         private var cameraFocusQuadrant = initialRippleSnapshot.cameraFocusQuadrant
-        private var cameraVerticalFovDegrees = verticalFovFor(cameraFocusQuadrant)
+        private var cameraFovDegrees = fovFor(cameraFocusQuadrant)
         private var cameraTargetX = targetXFor(cameraFocusQuadrant)
         private var cameraTargetY = targetYFor(cameraFocusQuadrant)
         private var cameraAnimationStartNanos = 0L
-        private var cameraAnimationStartFovDegrees = cameraVerticalFovDegrees
+        private var cameraAnimationStartFovDegrees = cameraFovDegrees
         private var cameraAnimationStartTargetX = cameraTargetX
         private var cameraAnimationStartTargetY = cameraTargetY
-        private var cameraAnimationEndFovDegrees = cameraVerticalFovDegrees
+        private var cameraAnimationEndFovDegrees = cameraFovDegrees
         private var cameraAnimationEndTargetX = cameraTargetX
         private var cameraAnimationEndTargetY = cameraTargetY
         private val sphereTransform = FloatArray(16)
@@ -414,14 +415,15 @@ internal class FilamentRenderer(
 
         fun resize(width: Int, height: Int) {
             if (destroyed || width <= 0 || height <= 0) return
+            val projection = CameraFraming.projectionForViewport(width, height) ?: return
             this.width = width
             this.height = height
-            val aspectRatio = width.toDouble() / height.toDouble()
+            cameraProjection = projection
             view.viewport = Viewport(0, 0, width, height)
             overviewCameraDistance = CameraFraming.distanceForSphere(
                 radius = 1.0,
-                verticalFovDegrees = VERTICAL_FOV_DEGREES,
-                aspectRatio = aspectRatio,
+                shortSideFovDegrees = OVERVIEW_SHORT_SIDE_FOV_DEGREES,
+                projection = projection,
                 margin = FRAMING_MARGIN,
             )
             applyCameraPose()
@@ -544,10 +546,10 @@ internal class FilamentRenderer(
                 viewportHeight = height,
             )
             cameraFocusQuadrant = nextCameraFocus(cameraFocusQuadrant, tappedQuadrant)
-            cameraAnimationStartFovDegrees = cameraVerticalFovDegrees
+            cameraAnimationStartFovDegrees = cameraFovDegrees
             cameraAnimationStartTargetX = cameraTargetX
             cameraAnimationStartTargetY = cameraTargetY
-            cameraAnimationEndFovDegrees = verticalFovFor(cameraFocusQuadrant)
+            cameraAnimationEndFovDegrees = fovFor(cameraFocusQuadrant)
             cameraAnimationEndTargetX = targetXFor(cameraFocusQuadrant)
             cameraAnimationEndTargetY = targetYFor(cameraFocusQuadrant)
             cameraAnimationStartNanos = System.nanoTime()
@@ -853,7 +855,7 @@ internal class FilamentRenderer(
                     CAMERA_FOCUS_ANIMATION_NANOS.toDouble()
                 ).coerceAtMost(1.0)
             val easedProgress = progress * progress * (3.0 - 2.0 * progress)
-            cameraVerticalFovDegrees = lerp(
+            cameraFovDegrees = lerp(
                 cameraAnimationStartFovDegrees,
                 cameraAnimationEndFovDegrees,
                 easedProgress,
@@ -873,13 +875,17 @@ internal class FilamentRenderer(
         }
 
         private fun applyCameraPose() {
+            val projection = cameraProjection ?: return
             if (width <= 0 || height <= 0 || overviewCameraDistance <= 0.0) return
             camera.setProjection(
-                cameraVerticalFovDegrees,
-                width.toDouble() / height.toDouble(),
+                cameraFovDegrees,
+                projection.aspectRatio,
                 0.1,
                 100.0,
-                Camera.Fov.VERTICAL,
+                when (projection.fovAxis) {
+                    CameraFraming.FovAxis.HORIZONTAL -> Camera.Fov.HORIZONTAL
+                    CameraFraming.FovAxis.VERTICAL -> Camera.Fov.VERTICAL
+                },
             )
             camera.lookAt(
                 0.0,
@@ -1199,8 +1205,8 @@ internal class FilamentRenderer(
             const val BLOOM_STRENGTH = 0.10f
             const val LUNAR_TEXTURE_WIDTH = 2048
             const val LUNAR_TEXTURE_HEIGHT = 1024
-            const val VERTICAL_FOV_DEGREES = 45.0
-            const val FOCUSED_VERTICAL_FOV_DEGREES = 22.0
+            const val OVERVIEW_SHORT_SIDE_FOV_DEGREES = 45.0
+            const val FOCUSED_SHORT_SIDE_FOV_DEGREES = 22.0
             const val CAMERA_FOCUS_TARGET_OFFSET = 0.48
             const val CAMERA_FOCUS_ANIMATION_NANOS = 450_000_000L
             const val FRAMING_MARGIN = 1.18
@@ -1223,8 +1229,12 @@ internal class FilamentRenderer(
             val SPHERE_CENTER = Vector3(0.0, 0.0, 0.0)
             val LOCAL_Y_AXIS = Vector3(0.0, 1.0, 0.0)
 
-            fun verticalFovFor(quadrant: CameraFocusQuadrant?) =
-                if (quadrant == null) VERTICAL_FOV_DEGREES else FOCUSED_VERTICAL_FOV_DEGREES
+            fun fovFor(quadrant: CameraFocusQuadrant?) =
+                if (quadrant == null) {
+                    OVERVIEW_SHORT_SIDE_FOV_DEGREES
+                } else {
+                    FOCUSED_SHORT_SIDE_FOV_DEGREES
+                }
 
             fun targetXFor(quadrant: CameraFocusQuadrant?) =
                 quadrant?.horizontalSign?.times(CAMERA_FOCUS_TARGET_OFFSET) ?: 0.0
