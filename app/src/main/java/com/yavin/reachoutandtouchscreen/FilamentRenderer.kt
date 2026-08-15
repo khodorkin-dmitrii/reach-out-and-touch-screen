@@ -32,6 +32,11 @@ import java.nio.ByteOrder
 import java.nio.FloatBuffer
 import java.util.concurrent.CountDownLatch
 
+private data class LightArcballGesture(
+    val arcball: ArcballGesture,
+    val startSourceDirection: Vector3,
+)
+
 /**
  * Main-thread facade around a single-thread-owned Filament scene.
  *
@@ -44,6 +49,7 @@ internal class FilamentRenderer(
     assets: AssetManager,
     initialRippleSnapshot: RippleSnapshot,
     initialIdleRotationEnabled: Boolean,
+    initialRotateLightEnabled: Boolean,
     private val onFpsChanged: (Int) -> Unit,
 ) {
     private val renderThread = HandlerThread("FilamentRenderer").apply { start() }
@@ -59,6 +65,7 @@ internal class FilamentRenderer(
                 assets = assets,
                 initialRippleSnapshot = initialRippleSnapshot,
                 initialIdleRotationEnabled = initialIdleRotationEnabled,
+                initialRotateLightEnabled = initialRotateLightEnabled,
                 publishFps = ::publishFps,
             )
         }
@@ -95,6 +102,10 @@ internal class FilamentRenderer(
 
     fun setIdleRotationEnabled(enabled: Boolean) {
         post { setIdleRotationEnabled(enabled) }
+    }
+
+    fun setRotateLightEnabled(enabled: Boolean) {
+        post { setRotateLightEnabled(enabled) }
     }
 
     fun onDoubleTap(touch: TouchInput) {
@@ -167,6 +178,7 @@ internal class FilamentRenderer(
         private val assets: AssetManager,
         initialRippleSnapshot: RippleSnapshot,
         initialIdleRotationEnabled: Boolean,
+        initialRotateLightEnabled: Boolean,
         private val publishFps: (Int) -> Unit,
     ) : Choreographer.FrameCallback {
         private val engine = Engine.create()
@@ -254,9 +266,14 @@ internal class FilamentRenderer(
         private var sphereOrientation = initialRippleSnapshot.sphereOrientation
             .normalizedOrIdentity()
         private var idleRotationEnabled = initialIdleRotationEnabled
+        private var rotateLightEnabled = initialRotateLightEnabled
+        private var lightSourceDirection = normalizedLightSourceDirection(
+            initialRippleSnapshot.lightSourceDirection,
+        )
         private var lastSphereInteractionNanos = initialRippleTimeNanos
         private var lastRotationFrameTimeNanos = 0L
         private var arcballGesture: ArcballGesture? = null
+        private var lightArcballGesture: LightArcballGesture? = null
         private var arcballPointerInside = false
         private val orientationVelocityTracker = RecentOrientationVelocityTracker(
             capacity = ORIENTATION_SAMPLE_CAPACITY,
@@ -344,10 +361,15 @@ internal class FilamentRenderer(
                 .build(engine, sphereEntity)
             applySphereTransform()
 
+            val filamentLightDirection = filamentDirectionForSource(lightSourceDirection)
             LightManager.Builder(LightManager.Type.DIRECTIONAL)
                 .color(1f, 0.94f, 0.86f)
                 .intensity(95_000f)
-                .direction(-0.55f, -0.8f, -0.65f)
+                .direction(
+                    filamentLightDirection.x.toFloat(),
+                    filamentLightDirection.y.toFloat(),
+                    filamentLightDirection.z.toFloat(),
+                )
                 .castShadows(false)
                 .build(engine, lightEntity)
 
@@ -413,6 +435,20 @@ internal class FilamentRenderer(
             if (!canRender()) return
             val localHit = localSphereHit(touch) ?: return
             val hitDirection = localHit.normalized() ?: return
+            if (rotateLightEnabled) {
+                if (controlsRotation) {
+                    lightArcballGesture = createArcballGesture(
+                        touch = touch,
+                        startOrientation = Quaternion.Identity,
+                    )?.let { arcball ->
+                        LightArcballGesture(
+                            arcball = arcball,
+                            startSourceDirection = lightSourceDirection,
+                        )
+                    }
+                }
+                return
+            }
             val successfulHitNanos = timingSince(logicalDentStartNanos)
             val nowNanos = System.nanoTime()
             val pointerDownTimeNanos = eventTimeNanos.takeIf { it in 1..nowNanos } ?: nowNanos
@@ -420,7 +456,7 @@ internal class FilamentRenderer(
             if (controlsRotation) {
                 inertiaSpeedRadiansPerSecond = 0.0
                 lastRotationFrameTimeNanos = 0L
-                arcballGesture = createArcballGesture(touch)
+                arcballGesture = createArcballGesture(touch, sphereOrientation)
                 arcballPointerInside = arcballGesture?.projection?.contains(touch.x, touch.y) == true
                 orientationVelocityTracker.clear()
                 if (arcballGesture != null) {
@@ -461,6 +497,21 @@ internal class FilamentRenderer(
             lastRotationFrameTimeNanos = 0L
         }
 
+        fun setRotateLightEnabled(enabled: Boolean) {
+            if (destroyed || rotateLightEnabled == enabled) return
+            rotateLightEnabled = enabled
+            lightArcballGesture = null
+            if (!enabled) return
+
+            val interruptedMoonMotion =
+                arcballGesture != null || inertiaSpeedRadiansPerSecond != 0.0
+            arcballGesture = null
+            arcballPointerInside = false
+            orientationVelocityTracker.clear()
+            inertiaSpeedRadiansPerSecond = 0.0
+            if (interruptedMoonMotion) lastRotationFrameTimeNanos = 0L
+        }
+
         fun onDoubleTap(touch: TouchInput) {
             if (!canRender() || localSphereHit(touch) != null) return
             val tappedQuadrant = cameraFocusQuadrantFor(
@@ -480,6 +531,10 @@ internal class FilamentRenderer(
         }
 
         fun onRotationMove(touch: TouchInput, eventTimeNanos: Long) {
+            if (lightArcballGesture != null) {
+                if (canRender()) updateLightDrag(touch)
+                return
+            }
             val gesture = arcballGesture ?: return
             if (!canRender()) return
             markSphereInteraction()
@@ -491,6 +546,11 @@ internal class FilamentRenderer(
         }
 
         fun onRotationEnd(touch: TouchInput, eventTimeNanos: Long) {
+            if (lightArcballGesture != null) {
+                if (canRender()) updateLightDrag(touch)
+                lightArcballGesture = null
+                return
+            }
             if (arcballGesture == null) return
             markSphereInteraction()
             if (canRender()) updateRotationDrag(touch, eventTimeNanos)
@@ -498,6 +558,10 @@ internal class FilamentRenderer(
         }
 
         fun onRotationCancel() {
+            if (lightArcballGesture != null) {
+                lightArcballGesture = null
+                return
+            }
             if (arcballGesture == null) return
             markSphereInteraction()
             arcballGesture = null
@@ -546,6 +610,7 @@ internal class FilamentRenderer(
             return RippleSnapshot(
                 entries = rippleSnapshot.entries,
                 sphereOrientation = sphereOrientation,
+                lightSourceDirection = lightSourceDirection,
                 cameraFocusQuadrant = cameraFocusQuadrant,
                 accumulatedDentCompression = dentState.snapshotAccumulatedCompression(),
             )
@@ -718,7 +783,10 @@ internal class FilamentRenderer(
             resetFpsSampling()
         }
 
-        private fun createArcballGesture(touch: TouchInput): ArcballGesture? {
+        private fun createArcballGesture(
+            touch: TouchInput,
+            startOrientation: Quaternion,
+        ): ArcballGesture? {
             camera.getProjectionMatrix(projectionMatrix)
             camera.getViewMatrix(viewMatrix)
             val cameraBasis = CameraBasis.fromViewMatrix(viewMatrix) ?: return null
@@ -739,7 +807,7 @@ internal class FilamentRenderer(
             // Freeze camera/projection reference data so focus animation cannot bend one drag.
             return ArcballGesture(
                 startVectorView = startVector,
-                startOrientation = sphereOrientation,
+                startOrientation = startOrientation,
                 cameraBasis = cameraBasis,
                 projection = arcballProjection,
             )
@@ -857,6 +925,25 @@ internal class FilamentRenderer(
                     ),
                 )
             }
+        }
+
+        private fun updateLightDrag(touch: TouchInput) {
+            val gesture = lightArcballGesture ?: return
+            val worldDelta = gesture.arcball.worldDeltaAt(touch.x, touch.y) ?: return
+            val sourceDirection = rotatedLightSourceDirection(
+                startDirection = gesture.startSourceDirection,
+                worldDelta = worldDelta,
+            )
+            if (sourceDirection == lightSourceDirection) return
+            lightSourceDirection = sourceDirection
+            val filamentDirection = filamentDirectionForSource(sourceDirection)
+            val lightManager = engine.lightManager
+            lightManager.setDirection(
+                lightManager.getInstance(lightEntity),
+                filamentDirection.x.toFloat(),
+                filamentDirection.y.toFloat(),
+                filamentDirection.z.toFloat(),
+            )
         }
 
         private fun finishArcballGesture(releaseTimeNanos: Long) {

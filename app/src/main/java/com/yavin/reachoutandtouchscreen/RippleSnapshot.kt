@@ -14,6 +14,7 @@ internal data class RippleSnapshotEntry(
 internal class RippleSnapshot(
     entries: List<RippleSnapshotEntry>,
     val sphereOrientation: Quaternion = Quaternion.Identity,
+    val lightSourceDirection: Vector3 = DEFAULT_LIGHT_SOURCE_DIRECTION,
     val cameraFocusQuadrant: CameraFocusQuadrant? = null,
     accumulatedDentCompression: FloatArray = FloatArray(0),
 ) {
@@ -26,6 +27,7 @@ internal class RippleSnapshot(
         val Empty = RippleSnapshot(
             entries = emptyList(),
             sphereOrientation = Quaternion.Identity,
+            lightSourceDirection = DEFAULT_LIGHT_SOURCE_DIRECTION,
             cameraFocusQuadrant = null,
             accumulatedDentCompression = FloatArray(0),
         )

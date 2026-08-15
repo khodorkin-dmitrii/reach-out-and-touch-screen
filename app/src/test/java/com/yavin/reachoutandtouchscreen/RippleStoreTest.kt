@@ -280,9 +280,11 @@ class RippleStoreTest {
         original.add(ORIGIN_C, startTimeNanos = 10L)
         val rippleSnapshot = original.snapshot(nowNanos = 20L)
         val orientation = Quaternion.fromAxisAngle(Vector3(1.0, 1.0, 0.0), 1.25)
+        val lightSourceDirection = Vector3(1.0, 2.0, 3.0).normalized()!!
         val sceneSnapshot = RippleSnapshot(
             entries = rippleSnapshot.entries,
             sphereOrientation = orientation,
+            lightSourceDirection = lightSourceDirection,
             cameraFocusQuadrant = CameraFocusQuadrant.BOTTOM_RIGHT,
         )
         val restored = RippleStore(capacity = 1, lifetimeNanos = 100L)
@@ -290,6 +292,7 @@ class RippleStoreTest {
         restored.restore(sceneSnapshot, nowNanos = 30L)
 
         assertEquals(orientation, sceneSnapshot.sphereOrientation)
+        assertEquals(lightSourceDirection, sceneSnapshot.lightSourceDirection)
         assertEquals(CameraFocusQuadrant.BOTTOM_RIGHT, sceneSnapshot.cameraFocusQuadrant)
         assertSlot(restored, 0, ORIGIN_C, 10L)
     }

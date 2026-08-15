@@ -68,6 +68,7 @@ internal fun FilamentScene(
     var touchReactionEnabled by rememberSaveable { mutableStateOf(true) }
     var moonTextureEnabled by rememberSaveable { mutableStateOf(true) }
     var idleRotationEnabled by rememberSaveable { mutableStateOf(true) }
+    var rotateLightEnabled by rememberSaveable { mutableStateOf(false) }
     var controlsVisible by remember { mutableStateOf(true) }
     var controlsInteraction by remember { mutableIntStateOf(0) }
     val renderer = remember {
@@ -75,6 +76,7 @@ internal fun FilamentScene(
             assets = context.assets,
             initialRippleSnapshot = rippleStateViewModel.snapshot(),
             initialIdleRotationEnabled = idleRotationEnabled,
+            initialRotateLightEnabled = rotateLightEnabled,
             onFpsChanged = { fps = it },
         )
     }
@@ -102,6 +104,10 @@ internal fun FilamentScene(
 
     LaunchedEffect(renderer, idleRotationEnabled) {
         renderer.setIdleRotationEnabled(idleRotationEnabled)
+    }
+
+    LaunchedEffect(renderer, rotateLightEnabled) {
+        renderer.setRotateLightEnabled(rotateLightEnabled)
     }
 
     DisposableEffect(renderer, lifecycleOwner) {
@@ -223,6 +229,7 @@ internal fun FilamentScene(
             touchReactionEnabled = touchReactionEnabled,
             moonTextureEnabled = moonTextureEnabled,
             idleRotationEnabled = idleRotationEnabled,
+            rotateLightEnabled = rotateLightEnabled,
             onShowControls = ::showControls,
             onTouchReactionChanged = {
                 touchReactionEnabled = it
@@ -236,6 +243,11 @@ internal fun FilamentScene(
                 idleRotationEnabled = it
                 showControls()
             },
+            onRotateLightChanged = {
+                rotateLightEnabled = it
+                renderer.setRotateLightEnabled(it)
+                showControls()
+            },
         )
     }
 }
@@ -247,10 +259,12 @@ private fun BoxScope.FilamentSceneOverlay(
     touchReactionEnabled: Boolean,
     moonTextureEnabled: Boolean,
     idleRotationEnabled: Boolean,
+    rotateLightEnabled: Boolean,
     onShowControls: () -> Unit,
     onTouchReactionChanged: (Boolean) -> Unit,
     onMoonTextureChanged: (Boolean) -> Unit,
     onIdleRotationChanged: (Boolean) -> Unit,
+    onRotateLightChanged: (Boolean) -> Unit,
 ) {
     Text(
         text = if (fps > 0) "FPS: $fps" else "FPS: --",
@@ -268,10 +282,12 @@ private fun BoxScope.FilamentSceneOverlay(
         touchReactionEnabled = touchReactionEnabled,
         moonTextureEnabled = moonTextureEnabled,
         idleRotationEnabled = idleRotationEnabled,
+        rotateLightEnabled = rotateLightEnabled,
         onShow = onShowControls,
         onTouchReactionChanged = onTouchReactionChanged,
         onMoonTextureChanged = onMoonTextureChanged,
         onIdleRotationChanged = onIdleRotationChanged,
+        onRotateLightChanged = onRotateLightChanged,
         modifier = Modifier
             .align(Alignment.BottomStart)
             .navigationBarsPadding()
@@ -285,10 +301,12 @@ private fun SceneControls(
     touchReactionEnabled: Boolean,
     moonTextureEnabled: Boolean,
     idleRotationEnabled: Boolean,
+    rotateLightEnabled: Boolean,
     onShow: () -> Unit,
     onTouchReactionChanged: (Boolean) -> Unit,
     onMoonTextureChanged: (Boolean) -> Unit,
     onIdleRotationChanged: (Boolean) -> Unit,
+    onRotateLightChanged: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Box(
@@ -326,6 +344,11 @@ private fun SceneControls(
                         label = stringResource(R.string.idle_rotation),
                         checked = idleRotationEnabled,
                         onCheckedChange = onIdleRotationChanged,
+                    )
+                    ToggleRow(
+                        label = stringResource(R.string.rotate_light),
+                        checked = rotateLightEnabled,
+                        onCheckedChange = onRotateLightChanged,
                     )
                 }
             }
@@ -370,10 +393,12 @@ private fun FilamentScenePreview() {
                 touchReactionEnabled = true,
                 moonTextureEnabled = false,
                 idleRotationEnabled = true,
+                rotateLightEnabled = false,
                 onShowControls = {},
                 onTouchReactionChanged = {},
                 onMoonTextureChanged = {},
                 onIdleRotationChanged = {},
+                onRotateLightChanged = {},
             )
         }
     }
@@ -432,7 +457,7 @@ private const val CONTROLS_VISIBLE_MILLIS = 5_000L
 private const val CONTROLS_FADE_MILLIS = 250
 private const val MOON_TEXTURE_TRANSITION_MILLIS = 500
 private val CONTROLS_WIDTH = 240.dp
-private val CONTROLS_HEIGHT = 144.dp
+private val CONTROLS_HEIGHT = 188.dp
 
 internal inline fun <T> forEachNewPointerDown(
     changes: List<T>,

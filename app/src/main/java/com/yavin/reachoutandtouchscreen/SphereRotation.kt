@@ -168,16 +168,20 @@ internal data class ArcballGesture(
     val cameraBasis: CameraBasis,
     val projection: ArcballProjection,
 ) {
-    fun orientationAt(pointerX: Double, pointerY: Double): Quaternion? {
+    fun worldDeltaAt(pointerX: Double, pointerY: Double): Quaternion? {
         val currentVectorView = mapPointerToArcball(
             pointerX = pointerX,
             pointerY = pointerY,
             projection = projection,
         ) ?: return null
-        if (currentVectorView == startVectorView) return startOrientation
+        if (currentVectorView == startVectorView) return Quaternion.Identity
         val startWorld = cameraBasis.viewToWorld(startVectorView)
         val currentWorld = cameraBasis.viewToWorld(currentVectorView)
-        val worldDelta = Quaternion.rotating(startWorld, currentWorld)
+        return Quaternion.rotating(startWorld, currentWorld)
+    }
+
+    fun orientationAt(pointerX: Double, pointerY: Double): Quaternion? {
+        val worldDelta = worldDeltaAt(pointerX, pointerY) ?: return null
         return (worldDelta * startOrientation).normalizedOrIdentity()
     }
 }
