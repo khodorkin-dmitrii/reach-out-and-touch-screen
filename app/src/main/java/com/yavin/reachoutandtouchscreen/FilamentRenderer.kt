@@ -1199,10 +1199,12 @@ internal class FilamentRenderer(
             const val BACKGROUND_GREEN = 0.025f
             const val BACKGROUND_BLUE = 0.045f
             const val BACKGROUND_ALPHA = 1.0f
-            const val SUN_ANGULAR_RADIUS_DEGREES = 0.545f
-            const val SUN_HALO_SIZE = 25.0f
-            const val SUN_HALO_FALLOFF = 5.0f
-            const val BLOOM_STRENGTH = 0.10f
+            //
+            const val SUN_ANGULAR_RADIUS_DEGREES = 19.35f
+            const val SUN_HALO_SIZE = 1.0f
+            const val SUN_HALO_FALLOFF = 10.0f
+            const val BLOOM_STRENGTH = 0.40f
+            //
             const val LUNAR_TEXTURE_WIDTH = 2048
             const val LUNAR_TEXTURE_HEIGHT = 1024
             const val OVERVIEW_SHORT_SIDE_FOV_DEGREES = 45.0
