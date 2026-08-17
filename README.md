@@ -4,9 +4,10 @@ interactive Android 3D ripple playground
 
 ## 🎥 Demo
 
-<a>
+<a href="https://www.youtube.com/watch?v=0fl3sAlEawc">
   <img src="./docs/demo.gif" alt="Reach Out and Touch Screen demo" width="100%">
 </a>
+<p align="center"><a href="https://www.youtube.com/watch?v=0fl3sAlEawc">▶ Watch the demo on YouTube</a></p>
 
 <table>
   <tr>
