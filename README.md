@@ -2,9 +2,15 @@
 
 interactive Android 3D ripple playground
 
+## 🎥 Demo
+
+<a>
+  <img src="./docs/demo.gif" alt="Reach Out and Touch Screen demo" width="100%">
+</a>
+
 <table>
   <tr>
-    <td valign="top" width="55%">
+    <td valign="top" width="45%">
       <h2>About the project</h2>
       <p><strong>Reach Out and Touch Screen</strong> is an Android pet project focused on direct interaction with a real-time 3D scene rendered by <strong>Google Filament</strong>.</p>
       <p>The app presents a central PBR sphere that reacts to touch with animated shockwaves travelling across its surface. Several waves can remain active at once, overlap, reinforce one another, or partially cancel out through signed linear interference.</p>
@@ -17,6 +23,8 @@ interactive Android 3D ripple playground
         <li>explicit render-thread and GPU resource lifecycle management</li>
       </ul>
       <p>The project is intentionally compact: one clear interaction, developed through small and independently verifiable rendering milestones.</p>
+    </td>
+    <td valign="top" width="55%">
       <h2>✨ Current functionality</h2>
       <ul>
         <li>Real-time Filament scene with a procedurally generated PBR sphere, camera, and interactive SUN directional light</li>
@@ -32,26 +40,9 @@ interactive Android 3D ripple playground
         <li>Unit-tested ray casting, intersection, mesh, ripple storage, and wave mathematics</li>
       </ul>
     </td>
-    <td valign="top" width="45%">
-      <h2>🎥 Demo</h2>
-      <a>
-        <img src="./docs/demo.gif" alt="Reach Out and Touch Screen demo" width="100%">
-      </a>      
-    </td>
   </tr>
   <tr>
-    <td valign="top" width="50%">
-      <h2>🧱 Project structure</h2>
-      <p>The project currently uses a deliberately small single-module structure:</p>
-      <ul>
-        <li><code>:app</code> - Compose UI, touch input, Filament integration, scene resources, ripple state, and deterministic math</li>
-      </ul>
-      <p>The main runtime pipeline is:</p>
-      <p><code>Compose touch → surface coordinates → world-space ray → sphere hit → ripple state → Filament material</code></p>
-      <p>Compose owns the screen, lifecycle observation, pointer input, and debug UI. Filament renders into the <code>Surface</code> supplied by <code>AndroidExternalSurface</code>.</p>
-      <p>All Filament calls and resources are confined to a dedicated <code>HandlerThread</code>. The renderer explicitly owns the engine, scene, camera, geometry, material, swap chain, and frame scheduling.</p>
-    </td>
-    <td valign="top" width="50%">
+    <td valign="top" width="45%">
       <h2>🛠 Tech stack</h2>
       <ul>
         <li><strong>Kotlin</strong></li>
@@ -65,6 +56,17 @@ interactive Android 3D ripple playground
         <li><strong>JUnit4</strong></li>
         <li><strong>Gradle Kotlin DSL</strong></li>
       </ul>
+    </td>
+    <td valign="top" width="55%">
+      <h2>🧱 Project structure</h2>
+      <p>The project currently uses a deliberately small single-module structure:</p>
+      <ul>
+        <li><code>:app</code> - Compose UI, touch input, Filament integration, scene resources, ripple state, and deterministic math</li>
+      </ul>
+      <p>The main runtime pipeline is:</p>
+      <p><code>Compose touch → surface coordinates → world-space ray → sphere hit → ripple state → Filament material</code></p>
+      <p>Compose owns the screen, lifecycle observation, pointer input, and debug UI. Filament renders into the <code>Surface</code> supplied by <code>AndroidExternalSurface</code>.</p>
+      <p>All Filament calls and resources are confined to a dedicated <code>HandlerThread</code>. The renderer explicitly owns the engine, scene, camera, geometry, material, swap chain, and frame scheduling.</p>
     </td>
   </tr>
 </table>
