@@ -101,7 +101,7 @@ Active ripples retain their logical age, position, and slot identity when an ori
 - [x] Add surface-anchored single-axis touch rotation with inertia
 - [x] Prototype GPU vertex displacement and evaluate sphere mesh density
 - [x] Trackball rotation
-- [ ] Add a minimal interactive lighting experiment
+- [x] Add a minimal interactive lighting experiment
 - [ ] Run repeatable validation and performance checks on a physical Android device
 
 ## 🧠 Key engineering decisions
