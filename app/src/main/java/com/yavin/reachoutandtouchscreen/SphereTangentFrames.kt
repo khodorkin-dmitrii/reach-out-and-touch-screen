@@ -104,9 +104,11 @@ internal object SphereTangentFrames {
                     sectors = sectors,
                     destination = tangent,
                 )
-                val bitangentX = normalY * tangent[2] - normalZ * tangent[1]
-                val bitangentY = normalZ * tangent[0] - normalX * tangent[2]
-                val bitangentZ = normalX * tangent[1] - normalY * tangent[0]
+                // U increases east and V increases south, so the UV frame has negative
+                // handedness: B = -(N x T).
+                val bitangentX = normalZ * tangent[1] - normalY * tangent[2]
+                val bitangentY = normalX * tangent[2] - normalZ * tangent[0]
+                val bitangentZ = normalY * tangent[0] - normalX * tangent[1]
                 SphereMesh.writeTangentFrameQuaternion(
                     tangent[0],
                     tangent[1],
@@ -233,9 +235,9 @@ internal object SphereTangentFrames {
         var tangentZ = candidate[2] - normalProjection * normalZ
         var lengthSquared = tangentX * tangentX + tangentY * tangentY + tangentZ * tangentZ
         if (lengthSquared <= MIN_VECTOR_LENGTH_SQUARED || !lengthSquared.isFinite()) {
-            val longitude = -PI / 2.0 + 2.0 * PI * sector / sectors
-            val fallbackX = -sin(longitude).toFloat()
-            val fallbackZ = cos(longitude).toFloat()
+            val longitude = 2.0 * PI * (sector.toDouble() / sectors - 0.5)
+            val fallbackX = cos(longitude).toFloat()
+            val fallbackZ = -sin(longitude).toFloat()
             val fallbackProjection = fallbackX * normalX + fallbackZ * normalZ
             tangentX = fallbackX - fallbackProjection * normalX
             tangentY = -fallbackProjection * normalY

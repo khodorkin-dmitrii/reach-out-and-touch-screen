@@ -68,7 +68,36 @@ class SphereMeshTest {
     }
 
     @Test
-    fun tangentFrameMatchesIncreasingUvDirectionsAndIsRightHanded() {
+    fun lunarLongitudeIncreasesFromCenterTowardPositiveWorldX() {
+        val rings = 4
+        val sectors = 8
+        val mesh = SphereMesh.create(radius = 1f, rings = rings, sectors = sectors)
+        val equator = rings / 2
+
+        assertPosition(mesh, equator, sectors / 2, sectors, 0f, 0f, 1f)
+        assertPosition(mesh, equator, sectors * 3 / 4, sectors, 1f, 0f, 0f)
+        assertPosition(mesh, equator, sectors / 4, sectors, -1f, 0f, 0f)
+    }
+
+    @Test
+    fun triangleWindingFacesOutward() {
+        val rings = 8
+        val sectors = 16
+        val mesh = SphereMesh.create(radius = 1f, rings = rings, sectors = sectors)
+
+        for (indexOffset in mesh.indices.indices step 3) {
+            val first = indexedPosition(mesh, indexOffset)
+            val second = indexedPosition(mesh, indexOffset + 1)
+            val third = indexedPosition(mesh, indexOffset + 2)
+            val faceNormal = cross(subtract(second, first), subtract(third, first))
+            if (length(faceNormal) > 0.000_001f) {
+                assertTrue(dot(faceNormal, first) > 0f)
+            }
+        }
+    }
+
+    @Test
+    fun tangentFrameMatchesIncreasingUvDirectionsAndHasExpectedHandedness() {
         val rings = 12
         val sectors = 24
         val mesh = SphereMesh.create(radius = 1f, rings = rings, sectors = sectors)
@@ -91,17 +120,33 @@ class SphereMeshTest {
 
             assertTrue(dot(normalize(tangent), normalize(increasingU)) > 0.99f)
             assertTrue(dot(normalize(bitangent), normalize(increasingV)) > 0.99f)
-            assertTrue(dot(normalize(cross(tangent, bitangent)), normalize(normal)) > 0.999f)
+            assertTrue(dot(normalize(cross(tangent, bitangent)), normalize(normal)) < -0.999f)
         }
     }
 
     @Test
-    fun tangentQuaternionAlwaysCarriesPositiveHandednessIncludingEquator() {
+    fun frontEquatorTangentFrameUsesEastAndSouthTextureAxes() {
+        val rings = 4
+        val sectors = 8
+        val mesh = SphereMesh.create(radius = 1f, rings = rings, sectors = sectors)
+        val offset = vertexOffset(rings / 2, sectors / 2, sectors)
+        val quaternion = vector(mesh, offset + SphereMeshData.TANGENT_OFFSET, 4)
+        val tangent = rotate(quaternion, floatArrayOf(1f, 0f, 0f))
+        val normal = rotate(quaternion, floatArrayOf(0f, 0f, 1f))
+        val bitangent = cross(normal, tangent).map { it * sign(quaternion[3]) }.toFloatArray()
+
+        assertVector(tangent, 1f, 0f, 0f)
+        assertVector(bitangent, 0f, -1f, 0f)
+        assertVector(normal, 0f, 0f, 1f)
+    }
+
+    @Test
+    fun negativeUvHandednessUsesNegativeFilamentQuaternionSignIncludingEquator() {
         val mesh = SphereMesh.create(radius = 1f, rings = 12, sectors = 24)
 
         for (offset in mesh.vertices.indices step SphereMeshData.FLOATS_PER_VERTEX) {
             val w = mesh.vertices[offset + SphereMeshData.TANGENT_OFFSET + 3]
-            assertTrue("Tangent quaternion w must encode positive handedness", w > 0f)
+            assertTrue("Negative UV handedness must use Filament's negative W sign", w < 0f)
         }
     }
 
@@ -132,6 +177,41 @@ class SphereMeshTest {
 
     private fun position(mesh: SphereMeshData, ring: Int, sector: Int, sectors: Int): FloatArray =
         vector(mesh, vertexOffset(ring, sector, sectors) + SphereMeshData.POSITION_OFFSET, 3)
+
+    private fun indexedPosition(mesh: SphereMeshData, indexOffset: Int): FloatArray {
+        val vertexIndex = mesh.indices[indexOffset].toUShort().toInt()
+        return vector(
+            mesh,
+            vertexIndex * SphereMeshData.FLOATS_PER_VERTEX + SphereMeshData.POSITION_OFFSET,
+            3,
+        )
+    }
+
+    private fun assertPosition(
+        mesh: SphereMeshData,
+        ring: Int,
+        sector: Int,
+        sectors: Int,
+        expectedX: Float,
+        expectedY: Float,
+        expectedZ: Float,
+    ) {
+        val position = position(mesh, ring, sector, sectors)
+        assertEquals(expectedX, position[0], 0.000_001f)
+        assertEquals(expectedY, position[1], 0.000_001f)
+        assertEquals(expectedZ, position[2], 0.000_001f)
+    }
+
+    private fun assertVector(
+        actual: FloatArray,
+        expectedX: Float,
+        expectedY: Float,
+        expectedZ: Float,
+    ) {
+        assertEquals(expectedX, actual[0], 0.000_001f)
+        assertEquals(expectedY, actual[1], 0.000_001f)
+        assertEquals(expectedZ, actual[2], 0.000_001f)
+    }
 
     private fun vector(mesh: SphereMeshData, offset: Int, count: Int): FloatArray =
         mesh.vertices.copyOfRange(offset, offset + count)
@@ -168,4 +248,7 @@ class SphereMeshTest {
         repeat(count) { squaredLength += values[offset + it] * values[offset + it] }
         return sqrt(squaredLength)
     }
+
+    private fun length(values: FloatArray): Float =
+        sqrt(values.sumOf { (it * it).toDouble() }).toFloat()
 }

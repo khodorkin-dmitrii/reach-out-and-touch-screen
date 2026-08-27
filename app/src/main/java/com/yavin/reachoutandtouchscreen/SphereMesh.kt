@@ -1,6 +1,7 @@
 package com.yavin.reachoutandtouchscreen
 
 import kotlin.math.PI
+import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.sin
 import kotlin.math.sqrt
@@ -44,21 +45,22 @@ object SphereMesh {
             for (sector in 0..sectors) {
                 val u = sector.toDouble() / sectors
                 // NASA's map has 0 degrees longitude at U=0.5. Keep it on the camera-facing +Z
-                // hemisphere and place the duplicated equirectangular seam on the back (-Z).
-                val longitude = -PI / 2.0 + 2.0 * PI * u
-                val x = horizontalRadius * cos(longitude).toFloat()
-                val z = horizontalRadius * sin(longitude).toFloat()
+                // hemisphere, increase east longitude toward +X, and keep the seam on the back.
+                val longitude = 2.0 * PI * (u - 0.5)
+                val x = horizontalRadius * sin(longitude).toFloat()
+                val z = horizontalRadius * cos(longitude).toFloat()
 
                 vertices[vertexOffset++] = x * radius
                 vertices[vertexOffset++] = y * radius
                 vertices[vertexOffset++] = z * radius
 
-                // T follows increasing U/east, B follows increasing V/south, and T x B = N.
-                val tangentX = -sin(longitude).toFloat()
-                val tangentZ = cos(longitude).toFloat()
-                val bitangentX = y * tangentZ
-                val bitangentY = z * tangentX - x * tangentZ
-                val bitangentZ = -y * tangentX
+                // T follows increasing U/east and B follows increasing V/south. East x south
+                // points inward, so the tangent frame has negative handedness.
+                val tangentX = cos(longitude).toFloat()
+                val tangentZ = -sin(longitude).toFloat()
+                val bitangentX = y * sin(longitude).toFloat()
+                val bitangentY = -horizontalRadius
+                val bitangentZ = y * cos(longitude).toFloat()
                 writeTangentFrameQuaternion(
                     tangentX, 0f, tangentZ,
                     bitangentX, bitangentY, bitangentZ,
@@ -81,11 +83,11 @@ object SphereMesh {
                 val bottomRight = bottomLeft + 1
 
                 indices[indexOffset++] = topLeft.toShort()
-                indices[indexOffset++] = bottomLeft.toShort()
-                indices[indexOffset++] = topRight.toShort()
                 indices[indexOffset++] = topRight.toShort()
                 indices[indexOffset++] = bottomLeft.toShort()
+                indices[indexOffset++] = topRight.toShort()
                 indices[indexOffset++] = bottomRight.toShort()
+                indices[indexOffset++] = bottomLeft.toShort()
             }
         }
 
@@ -105,14 +107,23 @@ object SphereMesh {
         destination: FloatArray,
         destinationOffset: Int,
     ) {
+        val handedness = if (
+            (tangentY * bitangentZ - tangentZ * bitangentY) * normalX +
+            (tangentZ * bitangentX - tangentX * bitangentZ) * normalY +
+            (tangentX * bitangentY - tangentY * bitangentX) * normalZ < 0f
+        ) {
+            -1f
+        } else {
+            1f
+        }
         val m00 = tangentX
-        val m01 = bitangentX
+        val m01 = bitangentX * handedness
         val m02 = normalX
         val m10 = tangentY
-        val m11 = bitangentY
+        val m11 = bitangentY * handedness
         val m12 = normalY
         val m20 = tangentZ
-        val m21 = bitangentZ
+        val m21 = bitangentZ * handedness
         val m22 = normalZ
         val trace = m00 + m11 + m22
 
@@ -159,18 +170,39 @@ object SphereMesh {
         quaternionY *= inverseLength
         quaternionZ *= inverseLength
         quaternionW *= inverseLength
-        if (quaternionW < 0f) {
+        if (abs(quaternionW) < TANGENT_FRAME_W_BIAS) {
+            val dominantComponent = when {
+                abs(quaternionX) >= abs(quaternionY) && abs(quaternionX) >= abs(quaternionZ) ->
+                    quaternionX
+                abs(quaternionY) >= abs(quaternionZ) -> quaternionY
+                else -> quaternionZ
+            }
+            if (dominantComponent < 0f) {
+                quaternionX = -quaternionX
+                quaternionY = -quaternionY
+                quaternionZ = -quaternionZ
+            }
+            quaternionW = TANGENT_FRAME_W_BIAS
+            val xyzLength = sqrt(
+                quaternionX * quaternionX + quaternionY * quaternionY + quaternionZ * quaternionZ,
+            )
+            val xyzScale = sqrt(1f - TANGENT_FRAME_W_BIAS * TANGENT_FRAME_W_BIAS) / xyzLength
+            quaternionX *= xyzScale
+            quaternionY *= xyzScale
+            quaternionZ *= xyzScale
+        } else if (quaternionW < 0f) {
             quaternionX = -quaternionX
             quaternionY = -quaternionY
             quaternionZ = -quaternionZ
             quaternionW = -quaternionW
         }
-        if (quaternionW < TANGENT_FRAME_W_BIAS) {
-            quaternionW = TANGENT_FRAME_W_BIAS
-            val xyzScale = sqrt(1f - TANGENT_FRAME_W_BIAS * TANGENT_FRAME_W_BIAS)
-            quaternionX *= xyzScale
-            quaternionY *= xyzScale
-            quaternionZ *= xyzScale
+        // Filament reconstructs B as cross(N, T) * sign(W), so W carries the
+        // tangent frame handedness.
+        if (handedness < 0f) {
+            quaternionX = -quaternionX
+            quaternionY = -quaternionY
+            quaternionZ = -quaternionZ
+            quaternionW = -quaternionW
         }
 
         destination[destinationOffset] = quaternionX

@@ -38,9 +38,11 @@ Both textures use a trilinear mipmapped sampler. U repeats across the longitude
 seam and V clamps at the poles. Source and generated image row 0 is lunar north;
 rows increase southward, while columns and U increase eastward. The procedural
 sphere maps `V=0` to north and `V=1` to south. Its tangent points along increasing
-U/east, its bitangent along increasing V/south, and `(T, B, N)` is right-handed.
-Tangent quaternions use a small positive W bias when needed because Filament
-reconstructs `B` from `cross(N, T) * sign(W)`.
+U/east and its bitangent along increasing V/south. Because east crossed with south
+points inward, `(T, B, N)` has negative handedness. Tangent quaternions use a small
+non-zero W bias when needed; following Filament's packed-frame convention, the
+bitangent is reconstructed from `cross(N, T) * sign(W)`, so W has the frame's
+negative handedness.
 
 The material explicitly sets `flipUV: false`: mesh UVs already use the same
 top-to-bottom convention as the uploaded image rows, so Filament must not apply
