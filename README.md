@@ -1,3 +1,7 @@
+### for Data Sanity Lightning Talks
+
+# 🧪 From Touch to Traction: How My AI-Assisted 3D Moon Pet Project Became My Best-Performing LinkedIn Post ✨
+
 # 🌊 Reach Out and Touch Screen 
 
 interactive Android 3D ripple playground
@@ -158,3 +162,14 @@ Run the current automated checks with:
 No API keys or external services are required.
 
 <p align="center"><em>Touch the surface and watch it respond.</em></p>
+
+<table width="100%">
+  <tr>
+    <td width="60%" align="left" valign="middle">
+      <img src="docs/qr-linkIn.jpg" alt="LinkedIn QR code" height="400">
+    </td>
+    <td width="40%" align="right" valign="middle">
+      <img src="docs/qr-tree.png" alt="Linktree QR code" height="240">
+    </td>
+  </tr>
+</table>
