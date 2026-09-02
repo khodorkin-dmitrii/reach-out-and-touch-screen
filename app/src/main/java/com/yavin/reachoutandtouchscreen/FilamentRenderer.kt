@@ -53,6 +53,7 @@ internal class FilamentRenderer(
     initialIdleRotationEnabled: Boolean,
     initialRotateLightEnabled: Boolean,
     private val onFpsChanged: (Int) -> Unit,
+    private val onTouchReactionHit: () -> Unit,
 ) {
     private val renderThread = HandlerThread("FilamentRenderer").apply { start() }
     private val handler = Handler(renderThread.looper)
@@ -69,6 +70,7 @@ internal class FilamentRenderer(
                 initialIdleRotationEnabled = initialIdleRotationEnabled,
                 initialRotateLightEnabled = initialRotateLightEnabled,
                 publishFps = ::publishFps,
+                publishTouchReactionHit = ::publishTouchReactionHit,
             )
         }
     }
@@ -92,10 +94,10 @@ internal class FilamentRenderer(
     fun onPointerDown(
         touch: TouchInput,
         controlsRotation: Boolean,
-        createsTouchReaction: Boolean,
+        touchReactionMode: TouchReactionMode,
         eventTimeNanos: Long,
     ) {
-        post { onPointerDown(touch, controlsRotation, createsTouchReaction, eventTimeNanos) }
+        post { onPointerDown(touch, controlsRotation, touchReactionMode, eventTimeNanos) }
     }
 
     fun setMoonTextureBlend(blend: Float) {
@@ -176,12 +178,19 @@ internal class FilamentRenderer(
         }
     }
 
+    private fun publishTouchReactionHit() {
+        mainHandler.post {
+            if (acceptingCalls) onTouchReactionHit()
+        }
+    }
+
     private class RenderState(
         private val assets: AssetManager,
         initialRippleSnapshot: RippleSnapshot,
         initialIdleRotationEnabled: Boolean,
         initialRotateLightEnabled: Boolean,
         private val publishFps: (Int) -> Unit,
+        private val publishTouchReactionHit: () -> Unit,
     ) : Choreographer.FrameCallback {
         private val engine = Engine.create()
         private val renderer = engine.createRenderer()
@@ -453,7 +462,7 @@ internal class FilamentRenderer(
         fun onPointerDown(
             touch: TouchInput,
             controlsRotation: Boolean,
-            createsTouchReaction: Boolean,
+            touchReactionMode: TouchReactionMode,
             eventTimeNanos: Long,
         ) {
             val logicalDentStartNanos = if (DENT_REBUILD_TIMING_ENABLED) System.nanoTime() else 0L
@@ -488,12 +497,18 @@ internal class FilamentRenderer(
                     orientationVelocityTracker.reset(sphereOrientation, eventTimeNanos)
                 }
             }
-            if (!createsTouchReaction) return
+            if (!touchReactionMode.createsRipple && !touchReactionMode.createsDent) return
 
-            rippleStore.add(hitDirection, pointerDownTimeNanos)
-            uploadRippleParameters(nowNanos)
-            updateRippleClock(nowNanos)
-            rippleClockNeedsUpdate = true
+            publishTouchReactionHit()
+
+            if (touchReactionMode.createsRipple) {
+                rippleStore.add(hitDirection, pointerDownTimeNanos)
+                uploadRippleParameters(nowNanos)
+                updateRippleClock(nowNanos)
+                rippleClockNeedsUpdate = true
+            }
+
+            if (!touchReactionMode.createsDent) return
 
             val dentAccumulationStartNanos = timingNow()
             dentState.applyDent(

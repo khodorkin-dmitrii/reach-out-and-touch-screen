@@ -1,5 +1,6 @@
 package com.yavin.reachoutandtouchscreen
 
+import android.view.HapticFeedbackConstants
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -38,6 +39,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -45,6 +47,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
@@ -63,11 +66,13 @@ internal fun FilamentScene(
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
+    val hapticView = LocalView.current
     val lifecycleOwner = LocalLifecycleOwner.current
     var fps by remember { mutableIntStateOf(0) }
     var touchReactionEnabled by rememberSaveable { mutableStateOf(true) }
-    var moonTextureEnabled by rememberSaveable { mutableStateOf(true) }
-    var idleRotationEnabled by rememberSaveable { mutableStateOf(true) }
+    var dentsEnabled by rememberSaveable { mutableStateOf(false) }
+    var moonTextureEnabled by rememberSaveable { mutableStateOf(false) }
+    var idleRotationEnabled by rememberSaveable { mutableStateOf(false) }
     var rotateLightEnabled by rememberSaveable { mutableStateOf(false) }
     var controlsVisible by remember { mutableStateOf(true) }
     var controlsInteraction by remember { mutableIntStateOf(0) }
@@ -78,10 +83,18 @@ internal fun FilamentScene(
             initialIdleRotationEnabled = idleRotationEnabled,
             initialRotateLightEnabled = rotateLightEnabled,
             onFpsChanged = { fps = it },
+            onTouchReactionHit = {
+                hapticView.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+            },
         )
     }
     val touchAreaSize = remember { mutableStateOf(IntSize.Zero) }
-    val currentTouchReactionEnabled by rememberUpdatedState(touchReactionEnabled)
+    val currentTouchReactionMode by rememberUpdatedState(
+        TouchReactionMode.from(
+            touchReactionEnabled = touchReactionEnabled,
+            dentsEnabled = dentsEnabled,
+        ),
+    )
     val moonTextureBlend by animateFloatAsState(
         targetValue = if (moonTextureEnabled) 1f else 0f,
         animationSpec = tween(durationMillis = MOON_TEXTURE_TRANSITION_MILLIS),
@@ -173,7 +186,7 @@ internal fun FilamentScene(
                                             renderer.onPointerDown(
                                                 touch = touch,
                                                 controlsRotation = controlsRotation,
-                                                createsTouchReaction = currentTouchReactionEnabled,
+                                                touchReactionMode = currentTouchReactionMode,
                                                 eventTimeNanos = change.uptimeMillis * NANOS_PER_MILLISECOND,
                                             )
                                         }
@@ -227,12 +240,17 @@ internal fun FilamentScene(
             fps = fps,
             controlsVisible = controlsVisible,
             touchReactionEnabled = touchReactionEnabled,
+            dentsEnabled = dentsEnabled,
             moonTextureEnabled = moonTextureEnabled,
             idleRotationEnabled = idleRotationEnabled,
             rotateLightEnabled = rotateLightEnabled,
             onShowControls = ::showControls,
             onTouchReactionChanged = {
                 touchReactionEnabled = it
+                showControls()
+            },
+            onDentsChanged = {
+                dentsEnabled = it
                 showControls()
             },
             onMoonTextureChanged = {
@@ -257,11 +275,13 @@ private fun BoxScope.FilamentSceneOverlay(
     fps: Int,
     controlsVisible: Boolean,
     touchReactionEnabled: Boolean,
+    dentsEnabled: Boolean,
     moonTextureEnabled: Boolean,
     idleRotationEnabled: Boolean,
     rotateLightEnabled: Boolean,
     onShowControls: () -> Unit,
     onTouchReactionChanged: (Boolean) -> Unit,
+    onDentsChanged: (Boolean) -> Unit,
     onMoonTextureChanged: (Boolean) -> Unit,
     onIdleRotationChanged: (Boolean) -> Unit,
     onRotateLightChanged: (Boolean) -> Unit,
@@ -280,11 +300,13 @@ private fun BoxScope.FilamentSceneOverlay(
     SceneControls(
         visible = controlsVisible,
         touchReactionEnabled = touchReactionEnabled,
+        dentsEnabled = dentsEnabled,
         moonTextureEnabled = moonTextureEnabled,
         idleRotationEnabled = idleRotationEnabled,
         rotateLightEnabled = rotateLightEnabled,
         onShow = onShowControls,
         onTouchReactionChanged = onTouchReactionChanged,
+        onDentsChanged = onDentsChanged,
         onMoonTextureChanged = onMoonTextureChanged,
         onIdleRotationChanged = onIdleRotationChanged,
         onRotateLightChanged = onRotateLightChanged,
@@ -299,11 +321,13 @@ private fun BoxScope.FilamentSceneOverlay(
 private fun SceneControls(
     visible: Boolean,
     touchReactionEnabled: Boolean,
+    dentsEnabled: Boolean,
     moonTextureEnabled: Boolean,
     idleRotationEnabled: Boolean,
     rotateLightEnabled: Boolean,
     onShow: () -> Unit,
     onTouchReactionChanged: (Boolean) -> Unit,
+    onDentsChanged: (Boolean) -> Unit,
     onMoonTextureChanged: (Boolean) -> Unit,
     onIdleRotationChanged: (Boolean) -> Unit,
     onRotateLightChanged: (Boolean) -> Unit,
@@ -341,6 +365,12 @@ private fun SceneControls(
                         onCheckedChange = onMoonTextureChanged,
                     )
                     ToggleRow(
+                        label = stringResource(R.string.mesh_dents),
+                        checked = dentsEnabled,
+                        enabled = touchReactionEnabled,
+                        onCheckedChange = onDentsChanged,
+                    )
+                    ToggleRow(
                         label = stringResource(R.string.idle_rotation),
                         checked = idleRotationEnabled,
                         onCheckedChange = onIdleRotationChanged,
@@ -360,22 +390,25 @@ private fun SceneControls(
 private fun ToggleRow(
     label: String,
     checked: Boolean,
+    enabled: Boolean = true,
     onCheckedChange: (Boolean) -> Unit,
 ) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
-            .height(44.dp)
-            .clickable { onCheckedChange(!checked) },
+            .height(40.dp)
+            .clickable(enabled = enabled) { onCheckedChange(!checked) },
     ) {
         Text(
             text = label,
-            color = Color.White,
+            color = Color.White.copy(alpha = if (enabled) 1f else DISABLED_CONTROL_ALPHA),
             modifier = Modifier.weight(1f),
         )
         Switch(
             checked = checked,
+            enabled = enabled,
             onCheckedChange = onCheckedChange,
+            modifier = Modifier.scale(TOGGLE_SCALE),
         )
     }
 }
@@ -391,11 +424,13 @@ private fun FilamentScenePreview() {
                 fps = 60,
                 controlsVisible = true,
                 touchReactionEnabled = true,
+                dentsEnabled = false,
                 moonTextureEnabled = false,
-                idleRotationEnabled = true,
+                idleRotationEnabled = false,
                 rotateLightEnabled = false,
                 onShowControls = {},
                 onTouchReactionChanged = {},
+                onDentsChanged = {},
                 onMoonTextureChanged = {},
                 onIdleRotationChanged = {},
                 onRotateLightChanged = {},
@@ -456,8 +491,10 @@ private const val NANOS_PER_MILLISECOND = 1_000_000L
 private const val CONTROLS_VISIBLE_MILLIS = 5_000L
 private const val CONTROLS_FADE_MILLIS = 250
 private const val MOON_TEXTURE_TRANSITION_MILLIS = 500
-private val CONTROLS_WIDTH = 240.dp
-private val CONTROLS_HEIGHT = 188.dp
+private val CONTROLS_WIDTH = 210.dp
+private val CONTROLS_HEIGHT = 212.dp
+private const val DISABLED_CONTROL_ALPHA = 0.38f
+private const val TOGGLE_SCALE = 0.82f
 
 internal inline fun <T> forEachNewPointerDown(
     changes: List<T>,

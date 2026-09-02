@@ -1,6 +1,7 @@
 <resources>
     <string name="app_name">ReachOut and Touchscreen</string>
     <string name="touch_reaction">Touch Reaction</string>
+    <string name="mesh_dents">Mesh dents</string>
     <string name="moon_texture">Moon texture</string>
     <string name="idle_rotation">Idle rotation</string>
     <string name="rotate_light">Rotate light</string>
