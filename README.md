@@ -1,6 +1,6 @@
 ### for Data Sanity Lightning Talks
 
-# 🧪 From Touch to Traction: How My AI-Assisted 3D Moon Pet Project Became My Best-Performing LinkedIn Post ✨
+# 🧪 From Touch to Traction: How My 3D Moon Pet Project Became My Best-Performing LinkedIn Post ✨
 
 # 🌊 Reach Out and Touch Screen 
 
